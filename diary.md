@@ -4,6 +4,72 @@ Reverse-chronological log of decisions, setup, training runs, and results. Newes
 
 ---
 
+## 2026-05-28 — Day 1 (continued): RL + Imitation post-mortem
+
+### Result: both approaches failed in the deadline window. Honest accounting below.
+
+### RL from scratch (PPO + self-play + opponent league)
+
+**Setup**: entity-transformer policy (d_model=96, 4 heads, 3 layers, ~1.2M params), pointer-style target selection, PPO with GAE (γ=0.997, λ=0.95), 12 multiprocessing rollout workers on RunPod 3090. Trained against "easy" league: random, do_nothing, sniper, rusher, defender, heuristic_v1, adv_rf_v1, adv_rf_v2. 16 episodes per iter, 15% 4p mix.
+
+**Trajectory over 50 iters (~2.5 hrs)**:
+- Average wins: 1–2 / 16 (~10-20% true win rate), draws variable
+- T (active steps before elimination): bounced 4–40, no upward trend
+- Entropy oscillated wildly: 0.08 → 27.7 across iters, no convergence
+- KL bouncy (−0.005 to 0.28) but mostly tiny (<0.05) — policy barely updating most iters
+- Big improvement signals appeared on iters with massive entropy spikes (18, 26, 29, 32, 39) — T temporarily jumped to 36-39, wins hit 3/16 once, but never sustained
+- After iter 32, no further improvement
+
+**What went wrong with RL**:
+1. **Sparse terminal reward + 500-turn horizon** = too long for credit assignment. GAE with γ=0.997 helps but not enough for sparse +1/−1 signal.
+2. **Random init dies in 2 turns** (mitigated by launch_head bias=-1.5 init, but learning still slow).
+3. **Variance dominated**: 16 episodes/iter gave noisy gradient estimates; policy oscillated rather than converged.
+4. **Entropy bonus (0.01) too small** to maintain exploration but too big to allow exploitation — policy got stuck in local optima where rare big-entropy spikes were the only progress mechanism.
+5. **Adversaries too strong**: even the "easy" pool included adv_rf_v1/v2 (~600-700 line heuristics) that beat us reliably.
+6. **Bottleneck never moved to GPU**: rollouts dominated wall time (~165s/iter) while GPU sat at 0%.
+
+### Imitation pretraining (supervised behavior cloning)
+
+**Setup**:
+- Collected 381 game files of adversaries playing each other (6 targets: adv_rf_v1/v2/structured, heuristic_v1, sniper, rusher; 25 games per pair × 15 pairs).
+  - First batch (15 heavy-adversary pairs at 20 games) abandoned after 8 minutes per game realized = 5+ hours total. Switched to lighter pool.
+- Supervised cross-entropy on (launch / target / fraction) labels inferred from winner trajectories.
+- 3 epochs × ~530 batches × 128 batch size on 3090.
+
+**Result**: **policy net was worse than random**.
+- Single eval game: imitation.pt vs random → **lost (reward = −1)** in full 500 steps.
+- CPU inference: **3.5 minutes per game** (Kaggle's 1s/turn limit makes the transformer arch unshippable even if it learned).
+
+**Why imitation failed**:
+1. **Label noise**: my `_label_move` heuristic infers target slot from raycast direction. Adversaries use orbital intercept prediction — they aim at *future* positions, so the target with smallest angular delta to current positions is often wrong. Mass-mislabeled.
+2. **Mixture of experts**: training on data from 6 different heuristics with different strategies → model averaged across them, learning none coherently.
+3. **Loss never converged**: oscillated in 3.0–6.5 range across 41 minutes / 1611 steps. L_target best ~1.6 (vs random 4.56), worst >4.5 (worse than random in some batches).
+4. **Imbalanced batches**: launch base rate is ~20% per planet per turn; many batches had zero launches → target/fraction losses computed on tiny samples.
+5. **Skipped non-winner trajectories**: only ~50% of games had a clear winner; we dropped the loser data, halving effective dataset.
+
+### Architectural verdict
+The transformer policy was **doubly wrong**:
+- Too slow for Kaggle inference (3.5 min/game on CPU — env runs 500 turns; we have 1s per turn).
+- Too underdetermined by data we could collect in our budget.
+
+A **much smaller, much faster** policy (small MLP, ~10K params, runs in <10ms per turn) might both train faster (less variance) and ship within Kaggle limits. But we didn't have time to redo the architecture.
+
+### Total RL track cost
+- Pod wall time: ~3 hours
+- Pod spend: ~$1.40 of $20 budget
+- **No deployable RL artifact produced.**
+
+### Recommendation going forward
+- **Heuristic track is the only realistic submission path.** `heuristic_v1` beat the in-house pool 50-0 on Day 1. Teammates are extending it.
+- Stop the pod to save remaining ~$18 of credit.
+- If we revisit RL post-deadline, the architectural lessons here matter:
+  - Submission inference must run in <1s/turn → MLP or distilled compact transformer
+  - Cleaner imitation targets (per-adversary specialization, accurate target inference)
+  - Larger batch sizes per iter to tame variance
+  - Curriculum that starts with much weaker opponents (random only) for many iters before introducing heuristics
+
+---
+
 ## 2026-05-28 — Day 1 (continued): pivot to RL
 
 ### Pivot decision
