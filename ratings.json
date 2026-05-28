@@ -1,0 +1,260 @@
+{
+  "defender": {
+    "draws": 10,
+    "games": 50,
+    "losses": 33,
+    "opponents": {
+      "do_nothing": {
+        "draws": 10,
+        "games": 10,
+        "losses": 0,
+        "opponents": {},
+        "wins": 0
+      },
+      "heuristic_v1": {
+        "draws": 0,
+        "games": 10,
+        "losses": 10,
+        "opponents": {},
+        "wins": 0
+      },
+      "nearest_sniper": {
+        "draws": 0,
+        "games": 10,
+        "losses": 10,
+        "opponents": {},
+        "wins": 0
+      },
+      "random": {
+        "draws": 0,
+        "games": 10,
+        "losses": 5,
+        "opponents": {},
+        "wins": 5
+      },
+      "rusher": {
+        "draws": 0,
+        "games": 10,
+        "losses": 8,
+        "opponents": {},
+        "wins": 2
+      }
+    },
+    "wins": 7
+  },
+  "do_nothing": {
+    "draws": 10,
+    "games": 50,
+    "losses": 33,
+    "opponents": {
+      "defender": {
+        "draws": 10,
+        "games": 10,
+        "losses": 0,
+        "opponents": {},
+        "wins": 0
+      },
+      "heuristic_v1": {
+        "draws": 0,
+        "games": 10,
+        "losses": 10,
+        "opponents": {},
+        "wins": 0
+      },
+      "nearest_sniper": {
+        "draws": 0,
+        "games": 10,
+        "losses": 9,
+        "opponents": {},
+        "wins": 1
+      },
+      "random": {
+        "draws": 0,
+        "games": 10,
+        "losses": 7,
+        "opponents": {},
+        "wins": 3
+      },
+      "rusher": {
+        "draws": 0,
+        "games": 10,
+        "losses": 7,
+        "opponents": {},
+        "wins": 3
+      }
+    },
+    "wins": 7
+  },
+  "heuristic_v1": {
+    "draws": 0,
+    "games": 50,
+    "losses": 0,
+    "opponents": {
+      "defender": {
+        "draws": 0,
+        "games": 10,
+        "losses": 0,
+        "opponents": {},
+        "wins": 10
+      },
+      "do_nothing": {
+        "draws": 0,
+        "games": 10,
+        "losses": 0,
+        "opponents": {},
+        "wins": 10
+      },
+      "nearest_sniper": {
+        "draws": 0,
+        "games": 10,
+        "losses": 0,
+        "opponents": {},
+        "wins": 10
+      },
+      "random": {
+        "draws": 0,
+        "games": 10,
+        "losses": 0,
+        "opponents": {},
+        "wins": 10
+      },
+      "rusher": {
+        "draws": 0,
+        "games": 10,
+        "losses": 0,
+        "opponents": {},
+        "wins": 10
+      }
+    },
+    "wins": 50
+  },
+  "nearest_sniper": {
+    "draws": 0,
+    "games": 50,
+    "losses": 14,
+    "opponents": {
+      "defender": {
+        "draws": 0,
+        "games": 10,
+        "losses": 0,
+        "opponents": {},
+        "wins": 10
+      },
+      "do_nothing": {
+        "draws": 0,
+        "games": 10,
+        "losses": 1,
+        "opponents": {},
+        "wins": 9
+      },
+      "heuristic_v1": {
+        "draws": 0,
+        "games": 10,
+        "losses": 10,
+        "opponents": {},
+        "wins": 0
+      },
+      "random": {
+        "draws": 0,
+        "games": 10,
+        "losses": 1,
+        "opponents": {},
+        "wins": 9
+      },
+      "rusher": {
+        "draws": 0,
+        "games": 10,
+        "losses": 2,
+        "opponents": {},
+        "wins": 8
+      }
+    },
+    "wins": 36
+  },
+  "random": {
+    "draws": 0,
+    "games": 50,
+    "losses": 36,
+    "opponents": {
+      "defender": {
+        "draws": 0,
+        "games": 10,
+        "losses": 5,
+        "opponents": {},
+        "wins": 5
+      },
+      "do_nothing": {
+        "draws": 0,
+        "games": 10,
+        "losses": 3,
+        "opponents": {},
+        "wins": 7
+      },
+      "heuristic_v1": {
+        "draws": 0,
+        "games": 10,
+        "losses": 10,
+        "opponents": {},
+        "wins": 0
+      },
+      "nearest_sniper": {
+        "draws": 0,
+        "games": 10,
+        "losses": 9,
+        "opponents": {},
+        "wins": 1
+      },
+      "rusher": {
+        "draws": 0,
+        "games": 10,
+        "losses": 9,
+        "opponents": {},
+        "wins": 1
+      }
+    },
+    "wins": 14
+  },
+  "rusher": {
+    "draws": 0,
+    "games": 50,
+    "losses": 24,
+    "opponents": {
+      "defender": {
+        "draws": 0,
+        "games": 10,
+        "losses": 2,
+        "opponents": {},
+        "wins": 8
+      },
+      "do_nothing": {
+        "draws": 0,
+        "games": 10,
+        "losses": 3,
+        "opponents": {},
+        "wins": 7
+      },
+      "heuristic_v1": {
+        "draws": 0,
+        "games": 10,
+        "losses": 10,
+        "opponents": {},
+        "wins": 0
+      },
+      "nearest_sniper": {
+        "draws": 0,
+        "games": 10,
+        "losses": 8,
+        "opponents": {},
+        "wins": 2
+      },
+      "random": {
+        "draws": 0,
+        "games": 10,
+        "losses": 1,
+        "opponents": {},
+        "wins": 9
+      }
+    },
+    "wins": 26
+  }
+}

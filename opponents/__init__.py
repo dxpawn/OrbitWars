@@ -1,0 +1,47 @@
+"""Opponent registry — maps name → agent (callable OR absolute file path).
+
+Callables come from local opponents. File paths are passed through to
+kaggle_environments.env.run, which loads them as agent modules — used for
+the real-world adversaries dumped into ../other_adversaries/.
+"""
+
+import os
+
+from agents import heuristic_v1
+from opponents import defender, do_nothing, nearest_sniper, random_bot, rusher
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ADV = os.path.abspath(os.path.join(_HERE, "..", "other_adversaries"))
+
+REGISTRY: dict[str, object] = {
+    # In-house opponents
+    "random": random_bot.agent,
+    "do_nothing": do_nothing.agent,
+    "nearest_sniper": nearest_sniper.agent,
+    "defender": defender.agent,
+    "rusher": rusher.agent,
+    "heuristic_v1": heuristic_v1.agent,
+    # Real Kaggle submissions (file paths — env.run loads them as modules)
+    "adv_distance": os.path.join(_ADV, "Distance-Prioritized Agent.py"),
+    "adv_lbmax": os.path.join(_ADV, "LBMAX1224.py"),
+    "adv_structured": os.path.join(_ADV, "Structured Baseline.py"),
+    "adv_rf_v0": os.path.join(_ADV, "rf_v0.py"),
+    "adv_rf_v1": os.path.join(_ADV, "rf_v1.py"),
+    "adv_rf_v2": os.path.join(_ADV, "rf_v2.py"),
+}
+
+
+def get(name):
+    """Return the agent (callable or file path) for `name`. Raises KeyError."""
+    if name not in REGISTRY:
+        raise KeyError(f"Unknown opponent: {name!r}. Available: {sorted(REGISTRY)}")
+    return REGISTRY[name]
+
+
+def names():
+    return sorted(REGISTRY)
+
+
+def adversary_names():
+    """The real-world Kaggle adversaries (not in-house)."""
+    return sorted(n for n in REGISTRY if n.startswith("adv_"))
