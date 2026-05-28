@@ -1,4 +1,5 @@
-%%writefile submission.py
+# NOTE: original file started with `%%writefile submission.py` (Jupyter magic).
+# That line was stripped so we can load this as a plain Python module.
 import os
 os.environ['KAGGLE_ENVELOPES'] = '0'
 
