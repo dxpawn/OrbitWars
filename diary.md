@@ -4,6 +4,51 @@ Reverse-chronological log of decisions, setup, training runs, and results. Newes
 
 ---
 
+## 2026-05-28 — Session end: artifact inventory & next steps
+
+### What we stopped (at user's request)
+- All `rl.train`, `rl.collect_imitation`, `rl.imitation_train`, `rl.evaluate` processes on the pod killed via `pkill -9`. Pod confirmed clean (only `jupyter-lab` left, RunPod's built-in service — ignore).
+- All my local background tasks (Bash monitors, Monitor watchers) ended or timed out.
+
+### ⚠️ Pod billing still active — user action required
+- **Killing processes does NOT stop pod charges.** The 3090 pod itself is still allocated at $0.46/hr.
+- User must go to **RunPod UI → My Pods → click pod → "Stop"** (preserves volume + container at ~$0.01/hr) or **"Terminate"** (only network volume persists).
+- Network volume `orbit-data` retains all training artifacts even after termination — can be remounted to a new pod later.
+
+### What's on the pod (`/workspace/orbitwars/`) — preserved on network volume
+- `checkpoints/`:
+  - `imitation.pt` (1.1 MB) — supervised behavior-cloned policy. **Loses to random** (verified single-game eval). Probably not useful as-is but kept for reference.
+  - `step_00000176.pt`, `step_00000336.pt`, `step_00000496.pt`, `step_00000656.pt`, `step_00000816.pt`, `latest.pt` — RL checkpoints at iters 11, 21, 31, 41, 51. None evaluated against pool; none expected to be competitive (training never converged).
+- `state/imitation_data/` — 381 pickled game files (~50 MB total) from adversaries playing each other. Reusable if someone tries imitation again with better label inference.
+- `state/league.json` — final league stats (wins/losses against each opponent) from the killed RL run.
+- `logs/train.log`, `logs/collect.log`, `logs/imitation.log` — full stdout from each job.
+- All source code, identical to local repo.
+
+### What's in the local repo (`C:\Users\Admin\Downloads\OrbitWars\`)
+- **All source code** committed locally — `agents/`, `rl/`, `opponents/`, `eval/`, `main.py`, etc.
+- **`agents/heuristic_v1.py`** — the strong handcrafted heuristic. Beat the in-house pool 50-0 on Day 1. Still our submission floor.
+- **`main.py`** — auto-selects: looks for `checkpoints/best.pt`, falls back to `agents.heuristic_v1.agent`. Since no `best.pt` exists locally, currently ships heuristic.
+- **`scripts/make_submission.sh`** — builds `submission.tar.gz` ready for `kaggle competitions submit orbit-wars -f submission.tar.gz -m "..."`. Includes only the files needed for inference (no opponents/, no rl/train, no data).
+- **`other_adversaries/`** — 6 public Kaggle submissions (3,000+ lines each in some cases). Useful as eval opponents if anyone resumes the RL track.
+- **`ratings.json`** — local Glicko/win-rate data from Day 1 round-robin (sniper 72%, heuristic_v1 100% etc.).
+- **`diary.md`** — this file.
+
+### What you can do right now
+1. **Stop the pod** in RunPod UI (saves ~$0.46/hr).
+2. **Submit the heuristic to Kaggle** if you want a baseline leaderboard entry:
+   ```powershell
+   bash scripts\make_submission.sh
+   kaggle competitions submit orbit-wars -f submission.tar.gz -m "heuristic_v1 baseline"
+   ```
+3. **Coordinate with teammates** — they're extending the heuristic; merge their version into `agents/heuristic_v1.py` (or new file) before next submission.
+4. **Regenerate Kaggle API token** at https://www.kaggle.com/settings/api (since it was shared in this chat).
+
+### Final cost accounting
+- Total RunPod spend (this session): **~$1.40** of $20 budget.
+- Remaining: **~$18.60** — usable as standby (~1850 hours of stopped-pod retention) or for a future training pod.
+
+---
+
 ## 2026-05-28 — Day 1 (continued): RL + Imitation post-mortem
 
 ### Result: both approaches failed in the deadline window. Honest accounting below.
