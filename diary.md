@@ -4,6 +4,52 @@ Reverse-chronological log of decisions, setup, training runs, and results. Newes
 
 ---
 
+## 2026-05-28 — Day 1 (continued): pivot to RL
+
+### Pivot decision
+- User delegated heuristic dev to teammates. Our track is now **RL only**.
+- 6 public-leaderboard adversaries added to `other_adversaries/` (paths registered in `opponents.REGISTRY` as `adv_distance`, `adv_lbmax`, `adv_structured`, `adv_rf_v0`, `adv_rf_v1`, `adv_rf_v2`). They're 500–3500 lines each — much more sophisticated than our `nearest_sniper` baseline. These are real opponents.
+- New pod address (third deploy): `213.192.2.68:40013`. SSH alias `runpod-orbit` updated.
+- Kaggle API token written to `~/.kaggle/access_token` (user shared in plain chat — recommended regeneration after project ends).
+
+### RL stack built
+- `rl/features.py` — obs → entity-list tensor (MAX_ENTITIES=96, ENTITY_DIM=32, GLOBAL_DIM=12). Includes type onehots, owner onehots, position, ships (log-scaled), production, orbital flags, comet flag, distance to nearest owned planet, orbital phase sin/cos, fleet velocity. Carries slot→planet_id and slot→fleet_id maps for action decoding.
+- `rl/policy.py` — entity transformer (d_model=96, 4 heads, 3 layers, GELU, prenorm). Three action heads per slot: launch_logit (Bernoulli), target_logits (bilinear pointer attention over all other entities, masked to planets+fleets only), fraction_logits (5 bins: 0.10/0.25/0.50/0.75/0.95). Value head from masked-mean-pooled entity embeddings.
+- `rl/action_space.py` — samples per-owned-planet launch/target/fraction; computes angle deterministically from src→target with sun-avoidance tangent routing. Each launch produces one `[from_id, angle, ships]` move.
+- `rl/reward.py` — terminal (engine-aligned: +1 win, +0.5 tied-for-first, −1 loss) + shaping (planet captures, ship advantage delta, production delta). Shaping coef annealed during training.
+- `rl/rollout_worker.py` — one-episode worker. Builds `agent_fn` closure that logs (obs, action, value) inside `env.run`. Reusable across episodes via lazy `_POLICY` global.
+- `rl/ppo.py` — PPO with GAE (γ=0.997, λ=0.95). Joint log-prob per step = sum across all owned-planet decisions. `_step_logp_entropy` handles per-step variable K (number of owned planets) with masked log-softmax. Linter pass cleaned up the entropy computation with `torch.where` to avoid `0 * -inf` NaNs at masked target slots.
+- `rl/league.py` — opponent pool with inverse-win-rate sampling (hard opponents get more attention). Default league includes all 6 adversaries + in-house heuristics.
+- `rl/train.py` — main loop with multiprocessing Pool (fork on Linux, spawn on Windows). 2p / 4p mix configurable. Saves checkpoints to `checkpoints/step_XXX.pt` + `latest.pt`.
+- `agents/rl_inference.py` — load checkpoint, expose `agent(obs)` for submission.
+- `main.py` — auto-selects RL (`checkpoints/best.pt`) or falls back to `heuristic_v1`.
+
+### Local smoke test results
+- 1 iter, 2 episodes, CPU: pipeline runs end-to-end. KL=1.09 high (expected on first update from random init). Entropy=9.93 (high — random policy). 20s/episode locally.
+- Pod sync via `tar | ssh ... tar -xzf` (rsync not available on Windows bash). `--ignore-installed` needed to bypass blinker debian package conflict. `--break-system-packages` for PEP 668.
+- Pod: torch 2.8.0+cu128 pre-installed (CUDA confirmed). kaggle_environments 1.30.1 installed.
+
+### Smoke + first training launch
+- First pod smoke test: 16 workers / 16 episodes / 1 iter. **Two issues:**
+  1. T=2 average — agent dies in ~2 turns. Random policy was suicidally aggressive (launch_logit≈0.5, fraction bias uniform, often sent 95% of garrison each turn).
+  2. `OSError: [Errno 24] Too many open files` in `multiprocessing.resource_sharer` mid-run. Default ulimit -n was too low for 16 workers.
+- **Fixes applied:**
+  - Bias initial policy: `launch_head.bias = -1.5` (sigmoid ≈ 0.18 launches/turn/planet), `fraction_head.bias = [1.0, 0.5, 0, -0.5, -1.0]` (favor 0.10 and 0.25 fractions early). Random init no longer suicides.
+  - Reduced workers 16 → 12; `ulimit -n 65536` before launching.
+  - Cleaner launch via `/tmp/launch_train.sh` with `nohup ... & disown` (raw nohup-via-ssh had exit code 255 issues).
+- **First iter wall time: ~90s for 16 episodes, 12 workers** (~5.6s effective per game). PPO update <1s. GPU at 0% during rollouts (CPU-bound env), spikes during update.
+
+### Training command
+```
+ulimit -n 65536; PYTHONUNBUFFERED=1 nohup python -u -m rl.train \
+  --workers 12 --episodes-per-iter 16 --total-iters 500 --save-every 10 \
+  --device cuda --league easy --mix-4p-prob 0.15 --shape-anneal-iters 200
+```
+- League "easy": skips the heaviest adversaries (adv_distance, adv_lbmax, adv_structured, adv_rf_v0). Includes adv_rf_v1, adv_rf_v2, heuristic_v1, and the in-house baselines.
+- 16 episodes/iter × 500 iters = 8000 episodes total = ~12-13 hours.
+- Checkpoints: every 10 iters → `/workspace/orbitwars/checkpoints/step_XXXXXXXX.pt` and `latest.pt`.
+- Logs: `/workspace/orbitwars/logs/train.log` (PYTHONUNBUFFERED so we can `tail -f`).
+
 ## 2026-05-28 — Day 1: Project setup, cloud provisioned, eval harness scaffolding
 
 ### Cloud (RunPod)

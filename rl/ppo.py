@@ -147,18 +147,22 @@ def _step_logp_entropy(net_out: dict, my_slots, launch_sampled, target_idx, frac
         if not launch_sampled[k]:
             continue
         slot = my_slots[k]
-        # Target
+        # Target: forward already masked padding, self, and non-(planet/fleet)
         t_logits = target_l[slot]  # (N,)
-        # The same mask used during sampling: valid mask was based on slot ent type
-        # but since we stored target_idx, just use softmax over masked logits.
-        # For simplicity here, we recompute log-softmax with -inf at padded keys.
         t_log_softmax = F.log_softmax(t_logits, dim=-1)
         t_probs = t_log_softmax.exp()
-        idx = target_idx[k].clamp_min(0)
-        if 0 <= int(target_idx[k]) < t_logits.shape[0]:
+        idx = int(target_idx[k])
+        if 0 <= idx < t_logits.shape[0]:
             logp_target[k] = t_log_softmax[idx]
-            ent_target[k] = -(t_probs * t_log_softmax).sum()
-        # Fraction
+            # Entropy: -sum(p * log(p)). At masked positions, p=0 and log(p)=-inf;
+            # use `where` to make 0 * -inf = 0 instead of NaN.
+            safe_logp = torch.where(
+                torch.isfinite(t_log_softmax),
+                t_log_softmax,
+                torch.zeros_like(t_log_softmax),
+            )
+            ent_target[k] = -(t_probs * safe_logp).sum()
+        # Fraction (no masking needed — small fixed-size categorical)
         f_logits = fraction_l[slot]
         f_log_softmax = F.log_softmax(f_logits, dim=-1)
         f_probs = f_log_softmax.exp()

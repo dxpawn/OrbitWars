@@ -14,6 +14,7 @@ import numpy as np
 import torch
 
 from rl.league import League, default_league
+from rl.league_easy import easy_league
 from rl.policy import OrbitWarsPolicy
 from rl.ppo import flatten_trajectories, ppo_update
 from rl.rollout_worker import rollout_episode
@@ -108,6 +109,8 @@ def main(argv=None):
     parser.add_argument("--log-every", type=int, default=1)
     parser.add_argument("--mix-4p-prob", type=float, default=0.25,
                        help="Probability of running a 4-player episode each iter (rest are 2p).")
+    parser.add_argument("--league", default="default", choices=("default", "easy"),
+                       help="Opponent pool. 'easy' skips the heaviest adversaries.")
     args = parser.parse_args(argv)
 
     ckpt_dir = Path(args.checkpoints_dir)
@@ -130,8 +133,8 @@ def main(argv=None):
         start_step = _load_checkpoint(policy, optimizer, Path(args.resume))
         print(f"Resumed from {args.resume} at step {start_step}")
 
-    league = default_league()
-    print(f"League members: {sorted(league.members)}")
+    league = easy_league() if args.league == "easy" else default_league()
+    print(f"League members ({args.league}): {sorted(league.members)}", flush=True)
 
     # Persist league stats next to checkpoints
     league_path = state_dir / "league.json"

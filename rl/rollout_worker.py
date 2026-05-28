@@ -86,9 +86,16 @@ def rollout_episode(
 
     # Resolve opponent into something env.run accepts
     def _resolve(spec):
-        if callable(spec) or isinstance(spec, str):
+        if callable(spec):
             return spec
-        # File-path or registry name
+        if isinstance(spec, str):
+            try:
+                import opponents
+                if spec in opponents.REGISTRY:
+                    return opponents.REGISTRY[spec]
+            except (ImportError, AttributeError):
+                pass
+            return spec  # file path or env built-in name
         return spec
 
     traj_entities: list[np.ndarray] = []

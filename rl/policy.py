@@ -94,6 +94,21 @@ class OrbitWarsPolicy(nn.Module):
             nn.Linear(d_model, 1),
         )
 
+        self._init_action_biases()
+
+    def _init_action_biases(self):
+        """Bias initial action distribution to avoid suicidal play.
+
+        - launch_logit bias = -1.5 → sigmoid ≈ 0.18 launches/turn/planet,
+          preventing the random agent from emptying its planets every turn.
+        - fraction_head bias favors smaller fractions (0.10 / 0.25) so a
+          fresh agent doesn't dump 95% of garrison on a coinflip.
+        """
+        nn.init.constant_(self.launch_head.bias, -1.5)
+        # SHIP_FRACTIONS = (0.10, 0.25, 0.50, 0.75, 0.95)
+        with torch.no_grad():
+            self.fraction_head.bias.copy_(torch.tensor([1.0, 0.5, 0.0, -0.5, -1.0]))
+
     def forward(self, entities: torch.Tensor, mask: torch.Tensor, globals_: torch.Tensor):
         """Returns dict with per-entity logits + value.
 
@@ -117,10 +132,14 @@ class OrbitWarsPolicy(nn.Module):
         # target_logits[b, i, j] = <q[b,i], k[b,j]> / sqrt(d)
         target_logits = torch.einsum("bid,bjd->bij", q, k) / math.sqrt(self.d_model)
 
-        # Mask out invalid keys (padding columns)
-        # (B, N) → (B, 1, N)
-        key_pad = ~mask  # True = invalid
-        target_logits = target_logits.masked_fill(key_pad.unsqueeze(1), float("-inf"))
+        # Restrict targets to planets + fleets only (exclude sun + global + padding).
+        # The first 4 feature dims are the type onehot [planet, fleet, sun, global].
+        type_oh = entities[:, :, :4]  # (B, N, 4)
+        is_target_valid = (type_oh[:, :, 0] + type_oh[:, :, 1]) > 0.5  # (B, N) bool
+        # Also require mask=True (real entity)
+        is_target_valid = is_target_valid & mask
+        # Apply column mask (which keys are valid targets)
+        target_logits = target_logits.masked_fill(~is_target_valid.unsqueeze(1), float("-inf"))
         # Also mask self-loops (i == j)
         diag = torch.eye(target_logits.shape[1], device=target_logits.device, dtype=torch.bool)
         target_logits = target_logits.masked_fill(diag.unsqueeze(0), float("-inf"))
