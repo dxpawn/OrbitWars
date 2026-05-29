@@ -4,6 +4,95 @@ Reverse-chronological log of decisions, setup, training runs, and results. Newes
 
 ---
 
+## 2026-05-29 — CORRECTION: scores converged, hellburner WON. Do NOT pivot to ver16.
+
+### The 2026-05-28 conclusion was wrong — it read TrueSkill scores mid-convergence
+Kaggle Arena scores keep moving for many hours after submission as games accumulate.
+Yesterday's entry below recommended "pivot to ver16, hellburner is capped at ~630."
+That was based on transient scores (v2 at 600→761 while still climbing). **The scores
+have now fully converged and tell the opposite story:**
+
+| Submission | ref | Description | Converged score |
+|---|---|---|---|
+| **heuristic_v2** (bug-fixed hellburner) | 53118635 | our agent | **970.0** |
+| hellburner-original (bugs intact, A/B) | 53118897 | diagnostic | **970.1** |
+| teammate "hellburner + local tweaks" | 53125217 | NOT ours | 925.4 |
+| ver16 | 53110595 | teammate's prior best | 816.0 |
+
+**Conclusions (these supersede the 2026-05-28 "next-step recommendations"):**
+1. **Hellburner is the strongest base, not ver16.** v2 = 970 vs ver16 = 816 (+154). Keep
+   iterating on the hellburner/v2 base. Do NOT pivot to ver16.
+2. **Comet-chasing is NOT the differentiator.** ver16 actively chases comets and scores
+   816; v2 ignores comets entirely and scores 970. Adding comet logic (old task #11) is
+   speculative and risks diverting ships from the core conquest game. Deprioritized.
+3. **Local-overfitting actively HURTS on Kaggle — proven.** The teammate took hellburner,
+   made "changes to beat it locally," and the result scored **925 < plain hellburner's 970.**
+   Tuning a variant to beat the previous best in local h2h is the wrong gate. Validate
+   against a *diverse pool* (win-share vs all 5 public adversaries + simple bots), not h2h
+   vs the previous version.
+4. **The early-game bug-fix ended up neutral at convergence** (v2 970.0 ≈ hellburner 970.1).
+   The +161 mid-convergence gap was an artifact. The fix is harmless and correct, but it is
+   NOT the reason v2 is strong — the hellburner architecture itself is.
+
+### Environment facts (verified from kaggle_environments source this session)
+- `agents: [2, 4]` — env supports both 2p and 4p. Competition is 4-player FFA, winner = the
+  single player with the highest score (planet ships + fleet ships), tie ⇒ no winner.
+- **`actTimeout = 1.0s` per turn**, `agentTimeout = 2s`, `episodeSteps = 500`,
+  `shipSpeed = 6.0`, `cometSpeed = 4.0`. The 1s/turn cap is tight → a slow turn forfeits.
+- Comets: spawn at steps [50,150,250,350,450], `COMET_PRODUCTION = 1` (low), ship count =
+  `min` of 4 uniform(1,99) draws (biased low). They follow a fixed `paths` list visible in
+  `obs['comets']` and **expire** when path_index runs off the end. Captured comets are a
+  temporary, low-production asset — explains why ignoring them (v2) beats chasing them (ver16).
+
+### Strategy going forward (this session)
+The ONLY changes safe to ship without risking the live 970 are ones with zero strategic
+downside: (a) fixing silent exceptions that waste turns, (b) eliminating >1s turns that
+forfeit. Anything that changes targeting/strategy must clear a diverse-pool win-share gate
+AND show no regression — and even then, treat local results with suspicion (see point 3).
+Submission quota is SHARED with the teammate (they submitted 53125217) — do not burn slots.
+
+### Robustness audit of v2 (eval/diag_v2.py) — CLEAN
+Ran v2 instrumented (exceptions surfaced, every turn wall-timed) over real games:
+- **2p** (12 games, 4262 turns): 0 exceptions, turn time mean 55ms / p99 178ms / max 341ms,
+  zero turns >0.5s. 21% empty-move turns.
+- **4p** (12 games, 3073 turns): 0 exceptions, turn time mean 22ms / max 216ms, zero >0.5s.
+  **62.6% empty-move turns.**
+Conclusion: no silent crashes, no timeout risk anywhere (cap is 1.0s; we peak at 0.34s). The
+two "free win" categories (bugs, timeouts) are both already clean — there is no more free
+upside on the v2 architecture. The 4p passivity (63%) is the interesting bit (see v4 below).
+
+### v2 4p FFA baseline (eval/ffa4.py, new reproducible evaluator)
+4-player free-for-all, v2 + 3 opponents sampled from the 5 strongest public agents, 200
+games, hero seat rotated, lineups fixed by game index (so any candidate plays IDENTICAL
+games): **v2 = 76/200 = 38.0%, CI95 [31.6%, 44.9%]**. Well above the 25% fair share — v2
+wins ~1.5x its share against the toughest possible field. v2 is genuinely strong at 4p.
+
+### v4 experiment — multiplayer threat re-calibration — REJECTED (worse)
+Hypothesis: v2's evaluate_frontline_strategy assumes ALL connected enemies focus-fire a
+neighbor simultaneously at 50% strength before it will commit that neighbor's ships. In 4p
+that over-counts threat (the 3 opponents fight each other), causing the 63% passivity. v4
+scales the per-attacker fraction by 2/n_sides (0.50 in 2p → 0.25 in full 4p). Provably a
+**no-op in 2p**: verified byte-for-byte identical to v2 over 1881 2p turns, 0 mismatches.
+
+Result on the identical 200 4p games: **v4 = 61/200 = 30.5%, CI95 [24.5%, 37.2%]** — i.e.
+**7.5 points WORSE than v2.** Loosening the worst-case threat model makes v2 over-extend and
+get punished. v2's passivity is disciplined, not broken: in a 4-way knife fight, conserving
+ships and not overcommitting is what wins. **Rejected. submission.py stays = v2 (970).**
+
+This is the THIRD failed "improvement" (after the teammate's 925<970 local tweaks and v3's
+neutral leader-targeting). Strong evidence v2 sits at a local optimum; stop tweaking strategy.
+`agents/heuristic_v4.py` kept in repo as a documented negative result (like v3); NOT shipped.
+
+### Session status / hand-off
+- **submission.py = agents/heuristic_v2.py (md5 ffe92c56...), the live 970-pt agent. Unchanged.**
+- No submission slots spent this session (held the shared quota; teammate is iterating).
+- New tooling for future iterators: `eval/diag_v2.py` (exception+timing audit) and
+  `eval/ffa4.py` (reproducible 4p FFA win-share — the right gate for this competition).
+- Reproduce the v4 A/B: `python -m eval.ffa4 --hero heuristic_v2 --games 200` then
+  `--hero heuristic_v4 --games 200` (identical lineups by game index).
+
+---
+
 ## 2026-05-28 — Heuristic pivot: ship heuristic_v2 (bug-fixed hellburner)
 
 ### Context
