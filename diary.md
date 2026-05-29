@@ -121,7 +121,10 @@ make_submission.sh now emits v5.
 ### Session status / hand-off
 - **submission.py = agents/heuristic_v5.py (md5 5240492b...).** v5 = v2 + 4p-only reach=30.
   v2 (the live 970 agent) is unchanged in the repo and v5 is identical to it in 2p.
-- **Not yet uploaded to Kaggle** — quota is shared with the teammate; awaiting go-ahead.
+- **SUBMITTED 2026-05-29 13:34 UTC — ref 53154166 (status PENDING).** Score will converge over
+  hours (do not read the early number). Expectation: ≥ v2's 970 (better in 4p, identical in 2p).
+  v2's own submission (53118635, 970.0) remains live in parallel as a safety net — each
+  submission is rated independently. Quota at submit time: ~1 of 5 free.
 - New tooling: `eval/diag_v2.py` (exception+timing audit), `eval/ffa4.py` (reproducible 4p
   FFA win-share, supports `--offset` for held-out), `eval/sweep.py` (OAT param sweep),
   `agents/heuristic_tune.py` (env-var-tunable v2 clone).
