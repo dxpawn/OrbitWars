@@ -56,6 +56,23 @@ def _worker(args):
     return hero_won, r.winner == -1
 
 
+def run_ffa(hero: str, games: int, pool: list[str] | None = None,
+            workers: int | None = None, offset: int = 0) -> list[bool]:
+    """Run `games` 4p FFA games; return per-game [hero_won] (reproducible by index).
+
+    Lineups/seats/seeds depend only on the game index, so two heroes run with the
+    same (games, pool, offset) play IDENTICAL games — enabling a paired A/B.
+    `offset` shifts the index range, e.g. offset=10000 gives a held-out set.
+    """
+    pool = pool or DEFAULT_POOL
+    workers = workers or max(1, min(32, (os.cpu_count() or 4) - 2))
+    jobs = [(hero, offset + i, pool) for i in range(games)]
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(workers) as p:
+        results = p.map(_worker, jobs)
+    return [w for w, _ in results]
+
+
 def wilson95(wins: int, n: int) -> tuple[float, float]:
     if n == 0:
         return 0.0, 0.0
@@ -73,12 +90,13 @@ def main():
     ap.add_argument("--games", type=int, default=200)
     ap.add_argument("--pool", nargs="*", default=None)
     ap.add_argument("--workers", type=int, default=None)
+    ap.add_argument("--offset", type=int, default=0)
     args = ap.parse_args()
 
     pool = args.pool or DEFAULT_POOL
     workers = args.workers or max(1, min(32, (os.cpu_count() or 4) - 2))
 
-    jobs = [(args.hero, i, pool) for i in range(args.games)]
+    jobs = [(args.hero, args.offset + i, pool) for i in range(args.games)]
     t0 = time.time()
     ctx = mp.get_context("spawn")
     with ctx.Pool(workers) as p:

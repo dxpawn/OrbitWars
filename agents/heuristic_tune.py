@@ -1,35 +1,19 @@
-"""Heuristic v5 — heuristic_v2 + a mode-aware reach (MAX_DISTANCE) reduction.
+"""Heuristic v2 — derived from the public 'hellburner' submission.
 
-Inherits both of v2's bug-fixes vs the original hellburner (see bottom).
-
-The ONE behavioural change vs v2:
-  - v2 uses MAX_DISTANCE = 38 (the radius within which a planet pair is treated
-    as adjacent in the proximity graph, and thus the range over which the agent
-    will fling ships to attack or that it counts as an incoming threat). 38 was
-    hand-set. A parameter sweep (eval/sweep.py) over 4-player FFA win-share vs
-    the 5 strongest public agents, confirmed on a HELD-OUT seed range the sweep
-    never touched, shows reach is strongly over-tuned for multiplayer:
-        MAX_DISTANCE  held-out 4p win%  (baseline 38 = 44.4%)
-            34            50.8%   (+16 net paired)
-            32            51.6%   (+18)
-            30            57.2%   (+32)   <-- peak
-            28            53.2%   (+22)
-    A shorter reach concentrates force locally instead of flinging fleets across
-    the board to be picked off, and it shrinks the set of distant enemies counted
-    as threats. v5 uses MAX_DISTANCE = 30 when there are 3+ active sides (FFA),
-    and KEEPS v2's 38 in 1v1 (n_sides <= 2). So v5 is **byte-for-byte identical
-    to v2 in 2p** (verified), preserving the 2p strength that drives the bulk of
-    the Kaggle score, and only changes 4p where the gain is measured + confirmed.
-    As a 4p game collapses to a 1v1 endgame (opponents eliminated -> n_sides==2),
-    v5 reverts to v2's 38 automatically.
-  (EARLY_ROUNDS=5 looked good on the screen but flipped negative on held-out
-   seeds -> rejected. MAX_DISTANCE is the only real, robust lever found.)
-
-v2's bug-fixes (inherited) vs the original other_adversaries/hellburner.py:
+Key behavioural changes vs. the original other_adversaries/hellburner.py:
   1. Removed the `viz.add_text(...)` debug call inside run_early_game that
-     references an undefined module (crashed every early-game turn).
+     references an undefined module. In the original, this crashed every
+     early-game turn (steps 0-2) and was silently swallowed by the outer
+     try/except, effectively disabling all of hellburner's first-3-turn
+     planning.
   2. Removed the dangling `elapsed_ms = (time.perf_counter() - _t0) * 1000`
-     reference to an undefined `_t0` after run_early_game returned.
+     reference to an undefined `_t0` after run_early_game returned. Same
+     silent-swallow effect as above.
+
+Bug-fixing those means heuristic_v2 actually executes its 3-step DFS-based
+early-game optimizer, which the original was throwing away.
+
+Everything else is verbatim from hellburner so we can A/B precisely.
 """
 
 import math
@@ -84,17 +68,36 @@ class EarlyGameState:
     fleets: list = field(default_factory=list)
 
 
+import os as _os
+
+
+def _envi(name: str, default: int) -> int:
+    try:
+        return int(_os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 class Hellburner:
+    # Defaults below are v2's exact values. When the corresponding HB_* env var
+    # is unset, this agent is byte-for-byte identical to heuristic_v2. The sweep
+    # harness (eval/sweep.py) sets these to explore the parameter space.
     SHIP_SPEED_MAX: float = 6.0
     EARLY_ROUNDS: int = 3
     EARLY_LOOK_AHEAD: int = 33
-    MAX_DISTANCE: int = 38       # 1v1 reach (v2's value; used when n_sides <= 2)
-    MAX_DISTANCE_MP: int = 30    # 3p/4p reach (swept + held-out confirmed)
+    MAX_DISTANCE: int = 38
     ROTATION_LOOK_AHEAD: int = 10
     REINFORCEMENT_SIZE: int = 17
     GARRISON_SIZE: int = 11
 
     def __init__(self):
+        # Per-instance overrides from env (a fresh instance is made each turn).
+        self.EARLY_ROUNDS = _envi("HB_EARLY_ROUNDS", Hellburner.EARLY_ROUNDS)
+        self.EARLY_LOOK_AHEAD = _envi("HB_EARLY_LOOK_AHEAD", Hellburner.EARLY_LOOK_AHEAD)
+        self.MAX_DISTANCE = _envi("HB_MAX_DISTANCE", Hellburner.MAX_DISTANCE)
+        self.ROTATION_LOOK_AHEAD = _envi("HB_ROTATION_LOOK_AHEAD", Hellburner.ROTATION_LOOK_AHEAD)
+        self.REINFORCEMENT_SIZE = _envi("HB_REINFORCEMENT_SIZE", Hellburner.REINFORCEMENT_SIZE)
+        self.GARRISON_SIZE = _envi("HB_GARRISON_SIZE", Hellburner.GARRISON_SIZE)
         self.player: int = 0
         self.scene_step: int = 0
         self.angular_velocity: float = 0.0
@@ -107,9 +110,6 @@ class Hellburner:
         self.outbound_edges: ProximityGraph = {}
         self.future_pos: FuturePos = {}
         self.destination_list: DestinationList = {}
-        # Number of active sides (us + distinct enemy owners). 2 in 2p. Set per
-        # turn in main(); selects 1v1 vs multiplayer reach.
-        self.n_sides: int = 2
 
     def fleet_speed(self, ships: int | float) -> float:
         return min(self.SHIP_SPEED_MAX, 1.0 + (self.SHIP_SPEED_MAX - 1.0) * (math.log(ships) / math.log(1000)) ** 1.5)
@@ -805,19 +805,6 @@ class Hellburner:
 
         if not self.enemy_planets:
             return []
-
-        # v5: count active sides (us + distinct enemy owners with a planet or
-        # fleet). Use the tuned multiplayer reach in FFA, v2's reach in 1v1.
-        # Must be set BEFORE build_proximity_graph (the sole consumer of MAX_DISTANCE).
-        active_enemy_owners = {p.owner for p in self.enemy_planets if p.owner != -1}
-        active_enemy_owners |= {
-            f.owner for f in self.fleets
-            if f.owner != self.player and f.owner != -1
-        }
-        self.n_sides = 1 + len(active_enemy_owners)
-        self.MAX_DISTANCE = (
-            Hellburner.MAX_DISTANCE_MP if self.n_sides > 2 else Hellburner.MAX_DISTANCE
-        )
 
         self.build_orbital_info(obs.get('initial_planets', []))
         self.build_proximity_graph()

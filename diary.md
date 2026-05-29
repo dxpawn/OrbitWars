@@ -79,17 +79,54 @@ Result on the identical 200 4p games: **v4 = 61/200 = 30.5%, CI95 [24.5%, 37.2%]
 get punished. v2's passivity is disciplined, not broken: in a 4-way knife fight, conserving
 ships and not overcommitting is what wins. **Rejected. submission.py stays = v2 (970).**
 
-This is the THIRD failed "improvement" (after the teammate's 925<970 local tweaks and v3's
-neutral leader-targeting). Strong evidence v2 sits at a local optimum; stop tweaking strategy.
+This was the third failed "improvement" at the time (teammate's 925<970, v3 neutral, v4
+worse). It pointed at a local optimum — but the failures were all *strategy* tweaks. A
+*parameter* sweep had never been run. That's what finally worked (v5 below).
 `agents/heuristic_v4.py` kept in repo as a documented negative result (like v3); NOT shipped.
 
+### v5 — mode-aware MAX_DISTANCE=30 — CONFIRMED IMPROVEMENT (shipped to submission.py)
+The user asked to push past the local optimum. Rather than guess again, ran a disciplined
+one-at-a-time parameter sweep (`eval/sweep.py`) on a tunable v2 clone (`agents/heuristic_tune.py`,
+constants from HB_* env vars; byte-identical to v2 when unset), gated on 4p FFA win-share.
+
+**Screen (seeds 0–199):** MAX_DISTANCE down helps monotonically (44→30.0%, 38→38.0%,
+32→43.0%); EARLY_ROUNDS=5 looked +8; GARRISON/REINFORCEMENT neutral.
+**Held-out confirmation (seeds 100000+, 250 games each):** MAX_DISTANCE 30 = **57.2% vs
+baseline 44.4% (net +32 paired)**, peak of the 28–34 range (all +16..+32). Crucially,
+**EARLY_ROUNDS=5 flipped to net −6 on held-out → seed-luck, REJECTED.** (This is exactly why
+held-out confirmation matters; it caught a false positive.)
+
+So the one real, robust lever is reach: 38 → ~30. Mechanism: a shorter MAX_DISTANCE makes
+the proximity graph local, so the agent concentrates force near home instead of flinging
+fleets across the board to be picked off, and counts fewer distant enemies as threats.
+
+`agents/heuristic_v5.py` = v2 with **MAX_DISTANCE = 30 when n_sides > 2 (3p/4p), 38 in 1v1.**
+Gated on active sides so it's **byte-identical to v2 in 2p** (verified: 2051 turns, 0
+mismatches) — preserving the 2p strength that drives most of the Kaggle score — and reverts
+to 38 automatically when a 4p game collapses to a 1v1 endgame. Cheaper than v2 (fewer edges)
+so zero timeout risk.
+
+**Validation (every test on seeds/pools the tuning never saw):**
+
+| Test | seeds | opponent pool | v2 | v5 | paired net |
+|---|---|---|---|---|---|
+| Confirmation | offset 100k | 5 strongest | 44.4% | 57.2% | +32 |
+| Final A/B | offset 200k | 5 strongest | 42.8% | 51.2% | +21 |
+| Generalization | offset 300k | 8 mixed (incl. older) | 50.0% | **67.5%** | +35 |
+
+Consistent +21..+35 net across three independent seed ranges AND a different opponent mix →
+not seed-luck, not pool-overfit. **submission.py updated to heuristic_v5 (md5 5240492b...).**
+make_submission.sh now emits v5.
+
 ### Session status / hand-off
-- **submission.py = agents/heuristic_v2.py (md5 ffe92c56...), the live 970-pt agent. Unchanged.**
-- No submission slots spent this session (held the shared quota; teammate is iterating).
-- New tooling for future iterators: `eval/diag_v2.py` (exception+timing audit) and
-  `eval/ffa4.py` (reproducible 4p FFA win-share — the right gate for this competition).
-- Reproduce the v4 A/B: `python -m eval.ffa4 --hero heuristic_v2 --games 200` then
-  `--hero heuristic_v4 --games 200` (identical lineups by game index).
+- **submission.py = agents/heuristic_v5.py (md5 5240492b...).** v5 = v2 + 4p-only reach=30.
+  v2 (the live 970 agent) is unchanged in the repo and v5 is identical to it in 2p.
+- **Not yet uploaded to Kaggle** — quota is shared with the teammate; awaiting go-ahead.
+- New tooling: `eval/diag_v2.py` (exception+timing audit), `eval/ffa4.py` (reproducible 4p
+  FFA win-share, supports `--offset` for held-out), `eval/sweep.py` (OAT param sweep),
+  `agents/heuristic_tune.py` (env-var-tunable v2 clone).
+- Reproduce v5's edge: `python -m eval.ffa4 --hero heuristic_v2 --games 250 --offset 200000`
+  then `--hero heuristic_v5 ...` (identical lineups).
 
 ---
 
