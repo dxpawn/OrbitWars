@@ -118,6 +118,11 @@ Consistent +21..+35 net across three independent seed ranges AND a different opp
 not seed-luck, not pool-overfit. **submission.py updated to heuristic_v5 (md5 5240492b...).**
 make_submission.sh now emits v5.
 
+The "5 strongest" pool = adv_hellburner, adv_ver16, adv_proto_v15, adv_lb958, adv_in_progress.
+The "8 mixed" generalization pool = adv_ver16, adv_proto_v15, adv_lb958, adv_in_progress,
+adv_distance, adv_lbmax, adv_structured, adv_rf_v1 (drops the near-identical adv_hellburner,
+adds 4 older/weaker public agents the tuning never saw). ffa4 samples 3 opponents per game.
+
 ### Session status / hand-off
 - **submission.py = agents/heuristic_v5.py (md5 5240492b...).** v5 = v2 + 4p-only reach=30.
   v2 (the live 970 agent) is unchanged in the repo and v5 is identical to it in 2p.
