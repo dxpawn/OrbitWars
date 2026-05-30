@@ -4,8 +4,12 @@
 # IMPORTANT: As of 2026-05-28, Kaggle Arena for this competition rejects
 # multi-file tarballs (returns SubmissionStatus.ERROR with no log). It accepts
 # only a single Python file. So by default this script writes
-# `submission.py` — a copy of agents/heuristic_v5.py (our best agent:
-# v2 + mode-aware MAX_DISTANCE=30 in 3p/4p, byte-identical to v2 in 2p).
+# `submission.py`.
+#
+# AGENT CHOICE (2026-05-30): PROVEN best is agents/heuristic_v2.py (Kaggle 970).
+# heuristic_v5 REGRESSED on the ladder (~915 < 970) — do NOT ship it. The current
+# experiment is agents/heuristic_v6.py (forward-sim brain on v2's reach-38);
+# pending ladder result. Set AGENT below to v2 (safe) or v6 (experiment).
 #
 # It still emits submission.tar.gz too, in case tarballs ever start working
 # again, but the single-file `submission.py` is what to upload.
@@ -46,6 +50,7 @@ FILES=(
     agents/heuristic_v1.py
     agents/heuristic_v2.py
     agents/heuristic_v5.py
+    agents/heuristic_v6.py
     agents/rl_inference.py
     rl/__init__.py
     rl/features.py
@@ -63,8 +68,11 @@ echo "Building submission.tar.gz with ${#FILES[@]} files (currently rejected by 
 tar -czf submission.tar.gz "${FILES[@]}"
 du -sh submission.tar.gz
 
-# Preferred path: single-file submission.py = our best agent (heuristic_v5).
-cp agents/heuristic_v5.py submission.py
+# Preferred path: single-file submission.py. Default to the v6 experiment;
+# override with SUBMIT_AGENT=agents/heuristic_v2.py for the proven 970 baseline.
+AGENT="${SUBMIT_AGENT:-agents/heuristic_v6.py}"
+cp "$AGENT" submission.py
+echo "submission.py <- $AGENT"
 echo "Wrote single-file submission.py ($(wc -l < submission.py) lines, $(du -sh submission.py | cut -f1))"
 echo
 echo "Done."

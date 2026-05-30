@@ -1,9 +1,0 @@
-=== 4p FFA win-share | identical games | DEFAULT_POOL ===
-  heuristic_v5            95/200 = 47.5%  CI=[40.7%,54.4%]  (166s)
-  adv_heuristic1000       98/200 = 49.0%  CI=[42.2%,55.9%]  (151s)
-  paired (same games): adv_heuristic1000 won 42 that heuristic_v5 lost; heuristic_v5 won 39 that adv_heuristic1000 lost; net +3
-
-=== 2p head-to-head | alternating seats ===
-  adv_heuristic1000 beats heuristic_v5: 188/200 = 94.0%  CI=[89.8%,96.5%]  (no-winner: 0)  (121s)
-
-(If adv_heuristic1000 >> 50% h2h AND higher FFA win-share, the LB gap is real and adv_heuristic1000 is the stronger base.)

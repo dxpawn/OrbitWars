@@ -1,5 +1,11 @@
-/rl/__pycache__
+# Python build artifacts
+__pycache__/
 *.pyc
+
+# Logs and transient eval/sweep scratch output
 *.log
-/opponents/__pycache__
-*.pyc
+eval/*.out
+eval/*.err
+
+# Regeneratable submission artifacts (Kaggle rejects tarballs anyway)
+submission.tar.gz

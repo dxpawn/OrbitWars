@@ -21,20 +21,16 @@ from eval.ffa4 import run_ffa, wilson95  # noqa: E402
 V6_KEYS = ["V6_FWD_HORIZON", "V6_EMIT_FRAC", "V6_PLANET_W", "V6_PROD_W",
            "V6_MIN_GAIN", "V6_MAX_ACTIONS"]
 
-# Defaults: HORIZON=18, EMIT=0.20, PLANET_W=5, PROD_W=8, MIN_GAIN~0, MAX_ACTIONS=8.
-# The value weights (PROD_W/PLANET_W) govern expand-vs-fight; EMIT is opponent
-# pessimism; HORIZON is lookahead depth. Extremes-first screen.
+# PEAK-FIND (3rd seed range, offset 700000). EMIT is the real lever: held-out
+# +11 with a monotone 0.20->0.15->0.10 gradient. HORIZON weak + doesn't stack.
+# Locate the EMIT optimum and triple-confirm; very low emit may turn naive
+# (projection ignores snipe-back), so test below 0.10 too.
 CONFIGS: list[tuple[str, dict]] = [
     ("baseline (v6)", {}),
-    ("PROD_W=4", {"V6_PROD_W": "4"}),
-    ("PROD_W=12", {"V6_PROD_W": "12"}),
-    ("PROD_W=16", {"V6_PROD_W": "16"}),
-    ("PLANET_W=3", {"V6_PLANET_W": "3"}),
-    ("PLANET_W=8", {"V6_PLANET_W": "8"}),
+    ("EMIT=0.05", {"V6_EMIT_FRAC": "0.05"}),
+    ("EMIT=0.08", {"V6_EMIT_FRAC": "0.08"}),
     ("EMIT=0.10", {"V6_EMIT_FRAC": "0.10"}),
-    ("EMIT=0.35", {"V6_EMIT_FRAC": "0.35"}),
-    ("HORIZON=12", {"V6_FWD_HORIZON": "12"}),
-    ("HORIZON=26", {"V6_FWD_HORIZON": "26"}),
+    ("EMIT=0.12", {"V6_EMIT_FRAC": "0.12"}),
 ]
 
 

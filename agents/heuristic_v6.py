@@ -108,7 +108,10 @@ class Hellburner:
     EARLY_ROUNDS: int = 3
     EARLY_LOOK_AHEAD: int = 33
     MAX_DISTANCE: int = 38       # 1v1 reach (v2's value; used when n_sides <= 2)
-    MAX_DISTANCE_MP: int = 30    # 3p/4p reach (swept + held-out confirmed)
+    MAX_DISTANCE_MP: int = 38    # 3p/4p reach. REVERTED 30->38: v5's reach-30 won
+                                 # local 4p FFA but REGRESSED the real ladder
+                                 # (v5=918 < v2=970). Reach 38 everywhere = v2's
+                                 # proven base, so the ONLY diff from v2 is the brain.
     ROTATION_LOOK_AHEAD: int = 10
     REINFORCEMENT_SIZE: int = 17
     GARRISON_SIZE: int = 11
@@ -116,7 +119,10 @@ class Hellburner:
     # --- forward-projection brain (v6) ---
     FWD_HORIZON: int = 18                       # turns to project the whole board
     FWD_SNAPSHOT_TURNS: tuple = (4, 8, 13, 18)  # score is averaged over these horizons
-    FWD_EMIT_FRAC: float = 0.20                 # surplus fraction a phantom launch sends
+    FWD_EMIT_FRAC: float = 0.10                 # phantom-launch surplus fraction; swept +
+                                                # held-out confirmed (3 seed ranges: +7/+11/+8
+                                                # net vs 0.20). 0.10 is the peak; lower turns
+                                                # snipe-blind, higher is over-pessimistic.
     VAL_PLANET_W: float = 5.0                   # value of a planet-count lead (in ships)
     VAL_PROD_W: float = 8.0                     # value of a production lead (in ships)
     SEARCH_SOFT_BUDGET: float = 0.85            # s; per-turn deadline (actTimeout is 1.0)
@@ -133,6 +139,9 @@ class Hellburner:
         self.VAL_PROD_W = _envf("V6_PROD_W", Hellburner.VAL_PROD_W)
         self.SEARCH_MIN_GAIN = _envf("V6_MIN_GAIN", Hellburner.SEARCH_MIN_GAIN)
         self.SEARCH_MAX_ACTIONS = _envi("V6_MAX_ACTIONS", Hellburner.SEARCH_MAX_ACTIONS)
+        # 1v1 reach (used when n_sides <= 2). v5 kept 38 here; H1000 reaches far
+        # further (up to ~52) in 2p. Tunable to test the 2p-midgame-stall fix.
+        self.MAXDIST_2P = _envi("V6_MAXDIST_2P", Hellburner.MAX_DISTANCE)
         self.player: int = 0
         self.scene_step: int = 0
         self.angular_velocity: float = 0.0
@@ -1062,7 +1071,7 @@ class Hellburner:
         }
         self.n_sides = 1 + len(active_enemy_owners)
         self.MAX_DISTANCE = (
-            Hellburner.MAX_DISTANCE_MP if self.n_sides > 2 else Hellburner.MAX_DISTANCE
+            Hellburner.MAX_DISTANCE_MP if self.n_sides > 2 else self.MAXDIST_2P
         )
 
         self.build_orbital_info(obs.get('initial_planets', []))

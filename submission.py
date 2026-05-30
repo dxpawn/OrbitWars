@@ -1,43 +1,62 @@
-"""Heuristic v5 — heuristic_v2 + a mode-aware reach (MAX_DISTANCE) reduction.
+"""Heuristic v6 — heuristic_v5 + a forward-projection "brain".
 
-Inherits both of v2's bug-fixes vs the original hellburner (see bottom).
+This is our own reimplementation of the decision core that separates the public
+~1000-1100 LB agent (other_adversaries/HEURISTIC1000.py) from our 970 hellburner
+lineage. We keep ALL of v5's proven machinery — obs parsing, orbital geometry,
+intercept/aim, sun-blocking, the per-planet combat sim (simulate_planet_timeline),
+candidate generation (evaluate_frontline_strategy), the early-game DFS, and the
+mode-aware reach (MAX_DISTANCE 38 in 1v1 / 30 in FFA) — and replace ONLY the
+mid-game decision rule.
 
-The ONE behavioural change vs v2:
-  - v2 uses MAX_DISTANCE = 38 (the radius within which a planet pair is treated
-    as adjacent in the proximity graph, and thus the range over which the agent
-    will fling ships to attack or that it counts as an incoming threat). 38 was
-    hand-set. A parameter sweep (eval/sweep.py) over 4-player FFA win-share vs
-    the 5 strongest public agents, confirmed on a HELD-OUT seed range the sweep
-    never touched, shows reach is strongly over-tuned for multiplayer:
-        MAX_DISTANCE  held-out 4p win%  (baseline 38 = 44.4%)
-            34            50.8%   (+16 net paired)
-            32            51.6%   (+18)
-            30            57.2%   (+32)   <-- peak
-            28            53.2%   (+22)
-    A shorter reach concentrates force locally instead of flinging fleets across
-    the board to be picked off, and it shrinks the set of distant enemies counted
-    as threats. v5 uses MAX_DISTANCE = 30 when there are 3+ active sides (FFA),
-    and KEEPS v2's 38 in 1v1 (n_sides <= 2). So v5 is **byte-for-byte identical
-    to v2 in 2p** (verified), preserving the 2p strength that drives the bulk of
-    the Kaggle score, and only changes 4p where the gain is measured + confirmed.
-    As a 4p game collapses to a 1v1 endgame (opponents eliminated -> n_sides==2),
-    v5 reverts to v2's 38 automatically.
-  (EARLY_ROUNDS=5 looked good on the screen but flipped negative on held-out
-   seeds -> rejected. MAX_DISTANCE is the only real, robust lever found.)
+v5's mid-game was greedy: pick the single reachable planet of highest production
+we can win, commit, repeat. That is myopic — no notion of the resulting board
+position, and it ignores who is winning.
 
-v2's bug-fixes (inherited) vs the original other_adversaries/hellburner.py:
-  1. Removed the `viz.add_text(...)` debug call inside run_early_game that
-     references an undefined module (crashed every early-game turn).
-  2. Removed the dangling `elapsed_ms = (time.perf_counter() - _t0) * 1000`
-     reference to an undefined `_t0` after run_early_game returned.
+v6 instead does a 1-ply search over a global value function:
+  1. forward_project(): project EVERY planet's (owner, ships) forward FWD_HORIZON
+     turns at once — production growth, in-flight fleet arrivals resolved with the
+     engine's simultaneous-combat math, plus "phantom" opponent launches (each
+     live planet periodically flings a fraction of its surplus at its nearest
+     non-friendly target) so we don't grab planets that get instantly sniped back.
+  2. forward_score(): score a projected board LEADER-RELATIVE — our advantage over
+     the single strongest opponent in ships + 5*planets + 8*production. This
+     matches Kaggle's win condition (single highest score wins), which v5's
+     absolute production heuristic does not.
+  3. plan_midgame(): for each candidate capture/defense (concrete fleet orders from
+     v5's evaluate_frontline_strategy), project the board WITH that action applied
+     and keep the action with the best score gain vs doing nothing. Commit, repeat
+     until no positive-gain action remains or the per-turn time budget is hit.
+
+Everything is bounded by a soft deadline (SEARCH_SOFT_BUDGET) so the heavier sim
+never risks the 1.0s actTimeout. v5's reinforcement pass still runs afterward.
+
+v5/v2's bug-fixes (inherited) vs the original other_adversaries/hellburner.py:
+  1. Removed the `viz.add_text(...)` debug call inside run_early_game.
+  2. Removed the dangling `elapsed_ms = (time.perf_counter() - _t0) * 1000`.
 """
 
 import math
+import os
 import time
 import copy
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
+
+
+def _envf(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _envi(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
 
 from kaggle_environments.envs.orbit_wars.orbit_wars import (
     Fleet, CENTER, ROTATION_RADIUS_LIMIT, SUN_RADIUS,
@@ -89,12 +108,40 @@ class Hellburner:
     EARLY_ROUNDS: int = 3
     EARLY_LOOK_AHEAD: int = 33
     MAX_DISTANCE: int = 38       # 1v1 reach (v2's value; used when n_sides <= 2)
-    MAX_DISTANCE_MP: int = 30    # 3p/4p reach (swept + held-out confirmed)
+    MAX_DISTANCE_MP: int = 38    # 3p/4p reach. REVERTED 30->38: v5's reach-30 won
+                                 # local 4p FFA but REGRESSED the real ladder
+                                 # (v5=918 < v2=970). Reach 38 everywhere = v2's
+                                 # proven base, so the ONLY diff from v2 is the brain.
     ROTATION_LOOK_AHEAD: int = 10
     REINFORCEMENT_SIZE: int = 17
     GARRISON_SIZE: int = 11
 
+    # --- forward-projection brain (v6) ---
+    FWD_HORIZON: int = 18                       # turns to project the whole board
+    FWD_SNAPSHOT_TURNS: tuple = (4, 8, 13, 18)  # score is averaged over these horizons
+    FWD_EMIT_FRAC: float = 0.10                 # phantom-launch surplus fraction; swept +
+                                                # held-out confirmed (3 seed ranges: +7/+11/+8
+                                                # net vs 0.20). 0.10 is the peak; lower turns
+                                                # snipe-blind, higher is over-pessimistic.
+    VAL_PLANET_W: float = 5.0                   # value of a planet-count lead (in ships)
+    VAL_PROD_W: float = 8.0                     # value of a production lead (in ships)
+    SEARCH_SOFT_BUDGET: float = 0.85            # s; per-turn deadline (actTimeout is 1.0)
+    SEARCH_MAX_ACTIONS: int = 8                 # cap committed actions per turn
+    SEARCH_MIN_GAIN: float = 1e-6               # only commit actions with positive score gain
+
     def __init__(self):
+        self._start_time: float = 0.0
+        # Brain knobs: env overrides for sweeping. Unset => class defaults
+        # (identical behaviour). eval/sweep_v6.py sets these to explore.
+        self.FWD_HORIZON = _envi("V6_FWD_HORIZON", Hellburner.FWD_HORIZON)
+        self.FWD_EMIT_FRAC = _envf("V6_EMIT_FRAC", Hellburner.FWD_EMIT_FRAC)
+        self.VAL_PLANET_W = _envf("V6_PLANET_W", Hellburner.VAL_PLANET_W)
+        self.VAL_PROD_W = _envf("V6_PROD_W", Hellburner.VAL_PROD_W)
+        self.SEARCH_MIN_GAIN = _envf("V6_MIN_GAIN", Hellburner.SEARCH_MIN_GAIN)
+        self.SEARCH_MAX_ACTIONS = _envi("V6_MAX_ACTIONS", Hellburner.SEARCH_MAX_ACTIONS)
+        # 1v1 reach (used when n_sides <= 2). v5 kept 38 here; H1000 reaches far
+        # further (up to ~52) in 2p. Tunable to test the 2p-midgame-stall fix.
+        self.MAXDIST_2P = _envi("V6_MAXDIST_2P", Hellburner.MAX_DISTANCE)
         self.player: int = 0
         self.scene_step: int = 0
         self.angular_velocity: float = 0.0
@@ -790,8 +837,216 @@ class Hellburner:
         return moves
 
     # ------------------------------------------------------------------
+    # Forward-projection brain (v6)
+
+    def forward_project(self, extra_arrivals=None, horizon=None,
+                        phantom=True, emit_frac=None, snapshot_turns=None):
+        """Project every planet's (owner, ships) forward `horizon` turns.
+
+        Resolves in-flight fleet arrivals (from destination_list) plus any
+        hypothetical `extra_arrivals` (our planned action) with the engine's
+        simultaneous-combat math, accrues production, and — if `phantom` — lets
+        each live planet periodically fling FWD_EMIT_FRAC of its surplus at its
+        nearest non-friendly target (a cheap opponent model so we don't grab
+        planets that get instantly sniped back).
+
+        extra_arrivals: list of (target_pid, eta, owner, ships).
+        Returns final {pid: (owner, ships)}, or (final, {t: snapshot}) when
+        snapshot_turns is given.
+        """
+        horizon = self.FWD_HORIZON if horizon is None else horizon
+        emit_frac = self.FWD_EMIT_FRAC if emit_frac is None else emit_frac
+        # state[pid] = [owner, ships(float), production]
+        state = {p.id: [int(p.owner), float(p.ships), int(p.production)] for p in self.planets}
+        pos = {p.id: (p.x, p.y) for p in self.planets}
+
+        arrivals = defaultdict(list)  # pid -> [(eta, owner, ships)]
+        for planet, entries in self.destination_list.items():
+            for entry in entries:
+                owner, ships, travel = int(entry[0]), int(entry[1]), entry[2]
+                if ships <= 0:
+                    continue
+                eta = max(1, int(math.ceil(travel)))
+                if eta <= horizon:
+                    arrivals[planet.id].append((eta, owner, ships))
+        if extra_arrivals:
+            for pid, eta, owner, ships in extra_arrivals:
+                if ships > 0 and 1 <= eta <= horizon:
+                    arrivals[pid].append((int(eta), int(owner), int(ships)))
+
+        snap_set = set(snapshot_turns) if snapshot_turns else None
+        snapshots = {}
+        for t in range(1, horizon + 1):
+            # production growth
+            for st in state.values():
+                if st[0] != -1:
+                    st[1] += st[2]
+            # phantom launches (opponents at full rate, us at half) every 4 turns
+            if phantom and t % 4 == 0:
+                for pid, st in state.items():
+                    if st[0] == -1 or st[1] < 10:
+                        continue
+                    owner = st[0]
+                    sx, sy = pos[pid]
+                    best_d2 = float('inf')
+                    best = None
+                    for opid, ost in state.items():
+                        if opid == pid or ost[0] == owner:
+                            continue
+                        ox, oy = pos[opid]
+                        d2 = (sx - ox) ** 2 + (sy - oy) ** 2
+                        if d2 < best_d2:
+                            best_d2, best = d2, opid
+                    if best is None:
+                        continue
+                    frac = emit_frac * (0.5 if owner == self.player else 1.0)
+                    emit = int(st[1] * frac)
+                    if emit < 5:
+                        continue
+                    speed = self.fleet_speed(max(2, emit))
+                    eta = t + max(1, int(math.ceil(math.sqrt(best_d2) / speed)))
+                    if eta <= horizon:
+                        arrivals[best].append((eta, owner, emit))
+                        st[1] -= emit
+            # resolve arrivals landing this turn (simultaneous combat)
+            for pid, arrs in arrivals.items():
+                this_turn = None
+                for eta, o, s in arrs:
+                    if eta == t:
+                        if this_turn is None:
+                            this_turn = defaultdict(float)
+                        this_turn[o] += s
+                if not this_turn:
+                    continue
+                st = state[pid]
+                d_owner, garrison = st[0], st[1]
+                ranked = sorted(this_turn.items(), key=lambda kv: kv[1], reverse=True)
+                top_o, top_s = ranked[0]
+                if len(ranked) >= 2 and ranked[1][1] == top_s:
+                    surv_s, surv_o = 0.0, -1
+                elif len(ranked) >= 2:
+                    surv_s, surv_o = top_s - ranked[1][1], top_o
+                else:
+                    surv_s, surv_o = top_s, top_o
+                if surv_s > 0:
+                    if d_owner == surv_o:
+                        st[1] = garrison + surv_s
+                    else:
+                        ng = garrison - surv_s
+                        if ng < 0:
+                            st[0] = surv_o
+                            st[1] = -ng
+                        else:
+                            st[1] = ng
+            if snap_set is not None and t in snap_set:
+                snapshots[t] = {pid: (st[0], st[1]) for pid, st in state.items()}
+
+        final = {pid: (st[0], st[1]) for pid, st in state.items()}
+        if snapshot_turns:
+            return final, snapshots
+        return final
+
+    def forward_score(self, state):
+        """Leader-relative value of a projected board from our POV:
+        (our ships - leader ships) + 5*(planets lead) + 8*(production lead),
+        where 'leader' is the single strongest OPPONENT (per metric). Aligns
+        with Kaggle's single-highest-score-wins rule."""
+        prod_by_pid = {p.id: int(p.production) for p in self.planets}
+        ships = defaultdict(float)
+        planets = defaultdict(int)
+        prod = defaultdict(int)
+        for pid, (o, s) in state.items():
+            if o == -1:
+                continue
+            ships[o] += s
+            planets[o] += 1
+            prod[o] += prod_by_pid.get(pid, 0)
+        me = self.player
+        others = [o for o in ships if o != me]
+        if not others:
+            return ships[me]
+        leader_ships = max(ships[o] for o in others)
+        leader_planets = max(planets[o] for o in others)
+        leader_prod = max(prod[o] for o in others)
+        return ((ships[me] - leader_ships)
+                + self.VAL_PLANET_W * (planets[me] - leader_planets)
+                + self.VAL_PROD_W * (prod[me] - leader_prod))
+
+    def _score_projection(self, extra_arrivals):
+        """Average leader-relative score over the snapshot horizons (stabler
+        than a single end-of-horizon read)."""
+        final, snaps = self.forward_project(
+            extra_arrivals=extra_arrivals, snapshot_turns=self.FWD_SNAPSHOT_TURNS)
+        total = 0.0
+        cnt = 0
+        for t in self.FWD_SNAPSHOT_TURNS:
+            snap = snaps.get(t)
+            if snap is not None:
+                total += self.forward_score(snap)
+                cnt += 1
+        if self.FWD_HORIZON not in self.FWD_SNAPSHOT_TURNS:
+            total += self.forward_score(final)
+            cnt += 1
+        return total / cnt if cnt else self.forward_score(final)
+
+    def _action_for_target(self, target):
+        """Concrete fleet orders to capture/defend `target`, or None. Mirrors
+        v5's evaluate_move_orders viability gates, but returns the action so the
+        search can SCORE it via projection instead of by raw production."""
+        if not bool(self.inbound_edges.get(target)):
+            return None
+        if target.owner == self.player:
+            if not bool(self.destination_list.get(target)):
+                return None
+            end_owner, _ = self.simulate_planet_timeline(target, self.destination_list)
+            if end_owner == self.player:
+                return None  # not threatened
+        else:
+            end_owner, _ = self.simulate_planet_timeline(target, self.destination_list)
+            if end_owner == self.player:
+                return None  # already being won by in-flight fleets
+        fleet_orders, intercepts, battle_won = self.evaluate_frontline_strategy(target)
+        if not battle_won or not fleet_orders:
+            return None
+        return fleet_orders, intercepts
+
+    def plan_midgame(self, deadline):
+        """1-ply search: repeatedly commit the capture/defense with the best
+        leader-relative projected score gain, until none helps or time is up."""
+        moves: FleetOrders = []
+        baseline = self._score_projection(None)
+        for _ in range(self.SEARCH_MAX_ACTIONS):
+            if time.perf_counter() >= deadline:
+                break
+            best_gain = self.SEARCH_MIN_GAIN
+            best = None
+            for target in sorted(self.planets, key=lambda p: p.ships, reverse=True):
+                if time.perf_counter() >= deadline:
+                    break
+                action = self._action_for_target(target)
+                if action is None:
+                    continue
+                fleet_orders, intercepts = action
+                extra = [
+                    (target.id, max(1, int(math.ceil(travel))), self.player, int(ships))
+                    for (_sid, _ang, ships), (_ix, _iy, travel) in zip(fleet_orders, intercepts)
+                ]
+                gain = self._score_projection(extra) - baseline
+                if gain > best_gain:
+                    best_gain = gain
+                    best = (target, fleet_orders, intercepts)
+            if best is None:
+                break
+            target, fleet_orders, intercepts = best
+            self.commit_move_orders((target, 0, fleet_orders, intercepts))
+            moves.extend(fleet_orders)
+            baseline = self._score_projection(None)
+        return moves
+
+    # ------------------------------------------------------------------
 
     def main(self, obs: dict[str, Any]) -> list[Any]:
+        self._start_time = time.perf_counter()
         self.player = obs['player']
         self.scene_step = obs['step'] - 1
         self.angular_velocity = obs['angular_velocity']
@@ -816,7 +1071,7 @@ class Hellburner:
         }
         self.n_sides = 1 + len(active_enemy_owners)
         self.MAX_DISTANCE = (
-            Hellburner.MAX_DISTANCE_MP if self.n_sides > 2 else Hellburner.MAX_DISTANCE
+            Hellburner.MAX_DISTANCE_MP if self.n_sides > 2 else self.MAXDIST_2P
         )
 
         self.build_orbital_info(obs.get('initial_planets', []))
@@ -831,14 +1086,10 @@ class Hellburner:
 
         self.build_reinforcement_targets()
 
-        moves = []
-        while True:
-            move_orders = self.evaluate_move_orders()
-            target_planet, _, fleet_orders, _ = move_orders
-            if target_planet is None:
-                break
-            self.commit_move_orders(move_orders)
-            moves.extend(fleet_orders)
+        # v6: replace v5's greedy "highest-production winnable target" loop with a
+        # 1-ply search over the leader-relative forward-projection value function.
+        deadline = self._start_time + self.SEARCH_SOFT_BUDGET
+        moves = self.plan_midgame(deadline)
 
         reinforcement_orders = self.send_reinforcements()
         if reinforcement_orders:

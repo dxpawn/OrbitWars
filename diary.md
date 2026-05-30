@@ -4,6 +4,108 @@ Reverse-chronological log of decisions, setup, training runs, and results. Newes
 
 ---
 
+## 2026-05-30 — v5 REGRESSED on the ladder (918<970); ported a forward-sim "brain" (v6); submitted v2+v6.
+
+### CRITICAL: v5 (yesterday's "best") scored 918, BELOW v2's 970. Local 4p FFA is anti-predictive.
+The converged public scores are now in, and they overturn yesterday's conclusion:
+
+| ref | agent | converged score |
+|---|---|---|
+| 53118635 | **heuristic_v2** (reach 38 everywhere) | **970.0** |
+| 53118897 | hellburner (orig, bugs) | 966.3 |
+| 53125217 | hellburner + local tweaks | 945.3 |
+| 53154166 | **heuristic_v5** (reach 30 in 4p) | **~915** (918.5 → 914.7, drifting) |
+| 53110595 | ver16 | 816.0 |
+
+v5's ONLY difference from v2 is `MAX_DISTANCE` 38→30 in 4p. That change won local 4p FFA
+decisively (+21..+35 net across 3 held-out seed ranges + a mixed pool) but **LOST 52 points
+on the real ladder.** This is the SECOND time a local-4p-FFA-validated change regressed the
+ladder (first: teammate's "hellburner + local tweaks" 945 < 970). **Conclusion: our local 4p
+FFA win-share metric is not merely unreliable — for reach tuning it was anti-correlated with
+ladder score. Treat ALL local-eval-only conclusions as unproven until a ladder submission says
+otherwise.** v2 (970) is our true best. (HANDOFF/diary entries below that call v5 "best" are wrong.)
+
+### A public agent (other_adversaries/HEURISTIC1000.py) scores 1000-1100 — studied it.
+4868-line, auto-tuned agent (constants like SO1_STATIC_BONUS_4P=2.95474 ⇒ CMA-ES). It is a
+different CLASS of agent. Its decision core ("brain"):
+  - **forward_project**: projects EVERY planet's (owner,ships) forward ~12-20 turns at once,
+    including "phantom" opponent launches (each live planet flings a fraction of surplus at its
+    nearest non-friendly target), resolved with engine simultaneous-combat math.
+  - **forward_score**: LEADER-RELATIVE value — (my_ships − leader_ships) + 5·(planets lead) +
+    8·(prod lead), leader = strongest opponent. Matches Kaggle's single-highest-wins rule.
+  - **search_step_action**: 1-ply search — score each candidate capture by its projected score
+    delta vs doing nothing, pick best. Plus a tactical pipeline (defense reserve/coalitions,
+    cheap-pickup, expand, accumulator, mega-hammer/hammer, multiprong), all time-budgeted.
+Verified in our harness: **2p h2h it beats v5 94%**; 4p FFA ~tied vs our strong pool; timing-safe
+(2p max 35ms, 4p max 170ms, 0 over 1.0s, 0 exc); self-contained single file. The gap is a
+*brain* gap (lookahead+leader-relative value), not a tuning gap — which is exactly why our
+constant micro-tuning kept producing nulls.
+
+### Built heuristic_v6 = v2's machinery + our own reimplementation of that brain.
+`agents/heuristic_v6.py`: keeps ALL of v5/v2's geometry, combat sim (simulate_planet_timeline),
+candidate gen (evaluate_frontline_strategy), early-game DFS, reinforcement. Replaces ONLY the
+greedy `value=production` mid-game loop with:
+  - `forward_project()` (global board projection w/ phantom launches),
+  - `forward_score()` (leader-relative),
+  - `plan_midgame()` (1-ply search committing best-projected-gain actions until none help or the
+    SEARCH_SOFT_BUDGET=0.85s deadline). ~330 lines added; reuses everything else.
+Brain knobs are env-tunable (V6_*) like heuristic_tune. Timing-safe (2p max 218ms, 4p max 143ms,
+0 over 1.0s, 0 exc).
+
+Validation (local — now known to be an unreliable predictor, but reported):
+  - 2p h2h: **v6 beats v5 ~60%** (58.5% @off300k, 60.9% @off900k) — robust, two seed ranges.
+  - 4p FFA: v6 vs v5 offset-dependent (+13 @off300k, −2 @off900k) ⇒ ~tied/noisy.
+  - vs strong pool v6 ≥ v5; vs weak mixed pool v6 ≈ v5 (both ~70%).
+  - v6 vs HEURISTIC1000 in 2p: only 13% (H1000 still dominates).
+
+### Tuning: EMIT_FRAC 0.20→0.10 is the one real brain knob (then a dead end on 2p).
+Sweep of brain constants (eval/sweep_v6.py), held-out confirmed:
+  - **FWD_EMIT_FRAC 0.20→0.10**: +7/+11/+8 net paired across 3 seed ranges (0,500k,700k); 0.10 is
+    the peak (0.05/0.08/0.12 lower). Baked into v6. (Less opponent-pessimism ⇒ v6 stops skipping
+    good captures it wrongly feared would be sniped.)
+  - HORIZON, PLANET_W, PROD_W: dead/noisy. Not changed.
+2p gap to H1000 diagnosed (eval/diag_2p.py): v6 is EVEN through step ~50, then STALLS and bleeds
+planets in the midgame (steps 75-150) while H1000 keeps expanding + cracking v6's planets — the
+mirror image of how v6 beats v5. A 2p-aggression sweep (eval/sweep_v6_2p.py vs H1000) found NO
+knob helps; longer 2p reach is sharply HARMFUL (−11/−15, reconfirming local concentration even in
+2p). The 2p gap is structural (H1000's whole tuned tactical layer), not tunable.
+
+### Submissions (today, 2 of 5 daily slots; quota confirmed free):
+  - **53185991 — heuristic_v2** (reach 38): re-establish the proven 970 as the ACTIVE agent
+    (since v5/915 was the latest = our worse agent was live).
+  - **53186031 — heuristic_v6**: the brain experiment. REBASED to reach-38 (MAX_DISTANCE_MP 30→38)
+    so the ONLY difference from v2(970) is the forward-sim brain — cleanest possible test. PENDING;
+    needs hours to converge. The whole point is ground truth: local eval can't tell us if the brain
+    beats 970.
+
+### New tooling
+  - eval/gap_h1000.py (v6/v5/H1000 FFA + 2p h2h), eval/h2h.py (general 2p h2h),
+    eval/time_h1000.py + inline timing (per-turn ms audits), eval/sweep_v6.py (brain sweep),
+    eval/sweep_v6_2p.py (2p-aggression sweep vs an opponent), eval/diag_2p.py (2p trajectory diag),
+    eval/v6_eval.py (decision-grade v6 vs v5 vs H1000).
+  - opponents/__init__.py: added adv_heuristic1000 (HEURISTIC1000.py) and heuristic_v6.
+  - submission.py currently = heuristic_v6.py (reach-38 brain). make_submission.sh now defaults
+    to v6 with `SUBMIT_AGENT=agents/heuristic_v2.py` override for the proven 970 baseline.
+
+### Repo cleanup (end of session)
+Removed accumulated scratch so the tree is clean: 22 transient sweep/eval logs (eval/*.out,
+eval/*.err — key numbers already transcribed above), the dead submission.tar.gz (Kaggle rejects
+tarballs), and all __pycache__/*.pyc (the prior session had committed these into git). Consolidated
+.gitignore to keep them out (__pycache__/, *.pyc, *.log, eval/*.out, eval/*.err, submission.tar.gz).
+KEPT: all eval/*.py tooling (reusable, referenced above for reproducibility) and the documented
+agent lineage (v1-v6, heuristic_tune) incl. the rejected/regressed ones as negative-result records.
+NOT touched: the abandoned-RL files (rl/, checkpoints/ 3.3MB, agents/rl_inference.py, main.py) —
+dead weight from the dropped RL path, but left in place pending an explicit call to purge them.
+
+### What to watch / next levers
+  - GROUND TRUTH: when 53185991 + 53186031 converge — does the brain (v6) beat v2's 970? v2 should
+    re-confirm ~970. If v6 > 970, the brain transfers and porting H1000's 2p tactical layer (hammer,
+    multiprong, anti-snipe, defensive reserve) becomes worth the (large) effort. If v6 ≤ 970, the
+    brain doesn't transfer (local eval misled again) and v2 stays our agent.
+  - DO NOT trust local 4p FFA for reach/aggression tuning — it has now mispredicted twice.
+
+---
+
 ## 2026-05-29 — CORRECTION: scores converged, hellburner WON. Do NOT pivot to ver16.
 
 ### The 2026-05-28 conclusion was wrong — it read TrueSkill scores mid-convergence
