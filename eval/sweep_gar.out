@@ -1,0 +1,17 @@
+  done: baseline (v5: MD=30)     145/260 = 55.8%  paired (base)
+  done: GAR=13                   133/260 = 51.2%  paired +14/-26 (net -12)
+  done: GAR=15                   135/260 = 51.9%  paired +14/-24 (net -10)
+  done: GAR=17                   133/260 = 51.2%  paired +17/-29 (net -12)
+  done: GAR=19                   134/260 = 51.5%  paired +15/-26 (net -11)
+  done: GAR=21                   137/260 = 52.7%  paired +19/-27 (net -8)
+
+=== sweep results (4p FFA, identical games) ===
+config                      win%            CI95  paired(vs base)
+baseline (v5: MD=30)      55.8%  [49.7%,61.7%]  (base)
+GAR=13                    51.2%  [45.1%,57.2%]  +14/-26 (net -12)
+GAR=15                    51.9%  [45.9%,57.9%]  +14/-24 (net -10)
+GAR=17                    51.2%  [45.1%,57.2%]  +17/-29 (net -12)
+GAR=19                    51.5%  [45.5%,57.5%]  +15/-26 (net -11)
+GAR=21                    52.7%  [46.6%,58.7%]  +19/-27 (net -8)
+
+baseline win% = 55.8%. Promising configs must be CONFIRMED on a held-out offset (e.g. --offset 100000) with more games before trusting.

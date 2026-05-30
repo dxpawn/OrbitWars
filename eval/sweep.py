@@ -27,20 +27,30 @@ from eval.ffa4 import run_ffa, wilson95  # noqa: E402
 HB_KEYS = [
     "HB_EARLY_ROUNDS", "HB_EARLY_LOOK_AHEAD", "HB_MAX_DISTANCE",
     "HB_ROTATION_LOOK_AHEAD", "HB_REINFORCEMENT_SIZE", "HB_GARRISON_SIZE",
+    "HB_COST_WEIGHT",
 ]
 
-# (label, {env overrides}). Empty dict = baseline (== v2).
-# Confirmation set: refine the two levers the screen flagged (MAX_DISTANCE down,
-# EARLY_ROUNDS up) + their combos. Run on a HELD-OUT offset to test for real.
+# (label, {env overrides}). v5 already shipped MAX_DISTANCE=30 for 3p/4p, so the
+# new baseline anchors HB_MAX_DISTANCE=30 (== v5's behaviour in a 4p FFA) and
+# sweeps the FOUR constants the v5 sweep never touched, one at a time:
+#   EARLY_LOOK_AHEAD (33)  ROTATION_LOOK_AHEAD (10)
+#   REINFORCEMENT_SIZE (17)  GARRISON_SIZE (11)
+# Extremes-first screen: if both extremes of a lever are flat vs baseline the
+# lever doesn't matter; if one shows signal, refine around it on a held-out offset.
+_MD = "30"  # v5's 3p/4p MAX_DISTANCE — fixed anchor for every config
+
+# All 4 untried constants were exhausted (ROT, GAR both collapsed held-out across
+# 3 seed ranges; ELA, RF flat). Constant-tuning is done. Now testing a STRUCTURAL
+# lever: a capture-cost penalty on the value function (value = production -
+# COST_WEIGHT * ships_committed). v5's value fn is the crude `value = production`,
+# ignoring how many ships a capture costs. Extremes-first screen (the scale of
+# production vs ships is uncertain); CW=0 reduces exactly to v5.
 CONFIGS: list[tuple[str, dict]] = [
-    ("baseline (v2)", {}),
-    ("MAX_DISTANCE=28", {"HB_MAX_DISTANCE": "28"}),
-    ("MAX_DISTANCE=30", {"HB_MAX_DISTANCE": "30"}),
-    ("MAX_DISTANCE=32", {"HB_MAX_DISTANCE": "32"}),
-    ("MAX_DISTANCE=34", {"HB_MAX_DISTANCE": "34"}),
-    ("EARLY_ROUNDS=5", {"HB_EARLY_ROUNDS": "5"}),
-    ("MD=32+ER=5", {"HB_MAX_DISTANCE": "32", "HB_EARLY_ROUNDS": "5"}),
-    ("MD=30+ER=5", {"HB_MAX_DISTANCE": "30", "HB_EARLY_ROUNDS": "5"}),
+    ("baseline (v5: MD=30)", {"HB_MAX_DISTANCE": _MD}),
+    ("CW=0.005", {"HB_MAX_DISTANCE": _MD, "HB_COST_WEIGHT": "0.005"}),
+    ("CW=0.01", {"HB_MAX_DISTANCE": _MD, "HB_COST_WEIGHT": "0.01"}),
+    ("CW=0.03", {"HB_MAX_DISTANCE": _MD, "HB_COST_WEIGHT": "0.03"}),
+    ("CW=0.08", {"HB_MAX_DISTANCE": _MD, "HB_COST_WEIGHT": "0.08"}),
 ]
 
 
@@ -67,7 +77,7 @@ def main():
         lo, hi = wilson95(wins, args.games)
         if label.startswith("baseline"):
             base_vec = vec
-            paired = "—"
+            paired = "(base)"
         else:
             # paired delta vs baseline on identical games
             cfg_only = sum(1 for c, b in zip(vec, base_vec) if c and not b)

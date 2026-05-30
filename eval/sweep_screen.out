@@ -1,0 +1,23 @@
+  done: baseline (v5: MD=30)     87/180 = 48.3%  paired (base)
+  done: ELA=25                   90/180 = 50.0%  paired +3/-0 (net +3)
+  done: ELA=41                   89/180 = 49.4%  paired +3/-1 (net +2)
+  done: ROT=6                    94/180 = 52.2%  paired +28/-21 (net +7)
+  done: ROT=14                   98/180 = 54.4%  paired +23/-12 (net +11)
+  done: RF=11                    86/180 = 47.8%  paired +9/-10 (net -1)
+  done: RF=23                    86/180 = 47.8%  paired +11/-12 (net -1)
+  done: GAR=7                    82/180 = 45.6%  paired +8/-13 (net -5)
+  done: GAR=15                   90/180 = 50.0%  paired +11/-8 (net +3)
+
+=== sweep results (4p FFA, identical games) ===
+config                      win%            CI95  paired(vs base)
+baseline (v5: MD=30)      48.3%  [41.1%,55.6%]  (base)
+ELA=25                    50.0%  [42.8%,57.2%]  +3/-0 (net +3)
+ELA=41                    49.4%  [42.2%,56.7%]  +3/-1 (net +2)
+ROT=6                     52.2%  [45.0%,59.4%]  +28/-21 (net +7)
+ROT=14                    54.4%  [47.2%,61.6%]  +23/-12 (net +11)  <== promising
+RF=11                     47.8%  [40.6%,55.0%]  +9/-10 (net -1)
+RF=23                     47.8%  [40.6%,55.0%]  +11/-12 (net -1)
+GAR=7                     45.6%  [38.4%,52.8%]  +8/-13 (net -5)
+GAR=15                    50.0%  [42.8%,57.2%]  +11/-8 (net +3)
+
+baseline win% = 48.3%. Promising configs must be CONFIRMED on a held-out offset (e.g. --offset 100000) with more games before trusting.

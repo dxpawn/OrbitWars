@@ -7,7 +7,7 @@ the real-world adversaries dumped into ../other_adversaries/.
 
 import os
 
-from agents import heuristic_v1, heuristic_v2, heuristic_v3, heuristic_v4, heuristic_v5, heuristic_tune
+from agents import heuristic_v1, heuristic_v2, heuristic_v3, heuristic_v4, heuristic_v5, heuristic_v6, heuristic_tune
 from opponents import defender, do_nothing, nearest_sniper, random_bot, rusher
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -25,6 +25,7 @@ REGISTRY: dict[str, object] = {
     "heuristic_v3": heuristic_v3.agent,
     "heuristic_v4": heuristic_v4.agent,
     "heuristic_v5": heuristic_v5.agent,
+    "heuristic_v6": heuristic_v6.agent,
     "heuristic_tune": heuristic_tune.agent,
     # Real Kaggle submissions (file paths — env.run loads them as modules)
     "adv_distance": os.path.join(_ADV, "Distance-Prioritized Agent.py"),
@@ -39,6 +40,7 @@ REGISTRY: dict[str, object] = {
     "adv_hellburner": os.path.join(_ADV, "hellburner.py"),
     "adv_proto_v15": os.path.join(_ADV, "Proto-V15.py"),
     "adv_in_progress": os.path.join(_ADV, "inProgress.py"),
+    "adv_heuristic1000": os.path.join(_ADV, "HEURISTIC1000.py"),  # user reports 1000-1100 LB, beats teammate
 }
 
 
