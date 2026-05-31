@@ -6,6 +6,15 @@ Reverse-chronological log of decisions, setup, training runs, and results. Newes
 
 ## 2026-05-31 — v6 BRAIN WINS THE LADDER: 1017.2 vs v2's 911.7 (same-day, +105). Brain transfers. Starting 2p tactical port.
 
+> ### Ladder state update (later 05-31, for the record)
+> - **Our v6 brain (ref 53186031) drifted 1017.2 → 1007.0.** Expected cross-day TrueSkill drift as the
+>   ladder population shifts (same pattern as v2: 970.0 → 910.4). Still our best, still the team's #1.
+> - **A separate submission exists on the shared quota: ref 53209940 = 960.0** ("a minor update of 1025
+>   with more brain of h1000", submitted 05-31 08:10, still converging). **NOT from this session** — I
+>   ran zero `kaggle submit` (every experiment here was a held-out regression; explicitly chose not to
+>   ship). This is a teammate's agent. Leaderboard is best-of, so 960 can't drag us below the 1007 brain;
+>   if it converges higher it only helps. (Recorded so the lineage is unambiguous.)
+
 The two 05-30 submissions converged. This is the cleanest, strongest result we've had:
 
 | ref | agent | submitted | converged score |
