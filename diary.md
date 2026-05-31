@@ -4,6 +4,106 @@ Reverse-chronological log of decisions, setup, training runs, and results. Newes
 
 ---
 
+## 2026-05-31 — v6 BRAIN WINS THE LADDER: 1017.2 vs v2's 911.7 (same-day, +105). Brain transfers. Starting 2p tactical port.
+
+The two 05-30 submissions converged. This is the cleanest, strongest result we've had:
+
+| ref | agent | submitted | converged score |
+|---|---|---|---|
+| 53186031 | **heuristic_v6 (forward-sim brain)** | 05-30 13:41 | **1017.2** ← team best |
+| 53185991 | heuristic_v2 (re-submit of proven 970) | 05-30 13:39 | **911.7** |
+
+**v6 beats v2 by +105.5 in a controlled same-day paired test** — both submitted within 2 min,
+both converged ~24h against the *same* opponent population. This is the gold-standard comparison
+we never had before (no cross-day scale drift to confound it).
+
+**Two big lessons, both confirmed:**
+1. **The brain transfers.** The open question from 05-30 ("does the v6 forward-sim brain beat
+   v2's 970?") is answered emphatically: yes, +105 over a *concurrently measured* baseline. The
+   forward-projection + leader-relative value + 1-ply search core is a real upgrade, not a
+   local-metric mirage. v6 is now our agent.
+2. **Cross-day absolute scores are untrustworthy — proven by a control.** The *identical* v2
+   agent scored 970.0 on 05-28 but 911.7 on 05-30 (−58 for the same code). The ladder scale
+   drifted (competitors strengthened). ⇒ Only same-day pairings are reliable; this is why we
+   re-submitted v2 alongside v6 instead of comparing v6 to the old 970. Worth the slot.
+
+Note: local 2p h2h (v6 beats v2-2p ~60%) WAS directionally predictive here, even though local 4p
+FFA was anti-predictive for v5's reach. The distinction: 2p h2h vs a fixed opponent is a cleaner
+signal than 4p FFA win-share. Still trust the ladder over local for any close call.
+
+### Tactical port attempt — cheap knob levers are DEAD (attack AND defense). Key reframe below.
+Added 4 env-gated, default-off 2p levers to `heuristic_v6.py` (shipped agent byte-identical with
+all off) and swept them paired vs H1000 (`eval/sweep_v6_2p.py`):
+  - `OVERSEND_2P` (skip capture-fleet trim → land full force): net +0 @N60 (neutral).
+  - `PRESS_2P` (post-search pass to press hold-able high-prod captures): net +0 (INERT — by the
+    time it runs, plan_midgame has already spent the available ships; nothing left to press).
+  - `DEF_PRESSURE_FRAC` 0.75/1.0/1.5 (source holds back bigger garrison vs counterattack): net −3
+    each (more defense slightly HURTS).
+⇒ Three independent lever families (attack-oversend, attack-press, defense-reserve), all
+neutral-to-negative. This RE-CONFIRMS the 05-30 finding with new evidence: **the 2p gap to H1000
+is structural, not closable by tuning v6's knobs.** baseline v6 vs H1000 in 2p ≈ 13%.
+
+### THE REFRAME (important): v6 ALREADY MATCHES H1000 ON THE LADDER (1017 vs 1000-1100) — despite
+losing their direct 2p h2h ~87-13. The ladder is mostly multi-opponent FFA + mixed 2p, not the
+H1000 mirror. So "close the 2p gap to H1000" is very likely the WRONG objective: v6 is broadly
+strong (beats v5 ~60% 2p, beat v2 by +105 on the ladder) and only loses to this ONE heavily-tuned
+opponent head-to-head. Optimizing the H1000 matchup ≠ optimizing ladder score — and per our
+hardest-won lesson, local single-opponent metrics mislead. The only knob that ever transferred
+(the brain) was a *structural* change, not a tuned constant.
+
+The one remaining tactical lever with real upside is H1000's PERSISTENT multi-turn staggered
+hammer (launch from staggered sources so a big combined fleet lands on ONE turn, beating a
+reinforcing defender). v6 can't do this today: `agent()` re-instantiates `Hellburner()` every turn,
+so v6 has ZERO cross-turn memory. Porting it = giving v6 module-level persistent plan state — a
+substantial, higher-risk build whose ladder payoff local eval can't reliably predict. Decision on
+whether to invest in it (vs holding our strong 1017) surfaced to the user.
+
+### Built the persistent staggered hammer (user chose the big swing) — then KILLED it. False positive.
+Implemented it fully (env-gated `V6_HAMMER`, default OFF, 2p-only so 4p == 1017 byte-for-byte):
+module-global plan state keyed by player + reset on game restart (`_HAMMER_PLANS`/`_HAMMER_LAST_STEP`),
+`_predict_defender` (per-target forecast at arrival), `_build_hammer` (pick high-prod target + stagger
+source launch turns to land on one turn, sized to defender×overkill), `plan_hammer` (validate/build/fire
++ reserve pending stockpiles), and a `_reserved_ids` skip in evaluate_frontline_strategy/send_reinforcements.
+Timing-safe (0 exc, max 202ms/turn over 1135 turns); genuinely active (11 plans/27 launches over 6 games).
+
+The trap: paired vs our OWN frozen 1017 (`heuristic_v6_1017`), the default hammer looked GREAT —
+net +12 (+18/-6), 25% vs 10%. **But that was tie-breaking in a near-mirror match, not strength.**
+The held-out cross-opponent confirm (`eval/confirm_hammer.py`, seedbase 200k, hammer-on vs -off paired
+per opponent) demolished it — the hammer is WORSE vs EVERY opponent:
+  - heuristic_v2 **net -33** (60.8% → 33.3%)   - adv_hellburner **net -25** (69.2% → 48.3%)
+  - adv_proto_v15 **net -13** (82.5% → 71.7%)  - adv_heuristic1000 -7   - adv_lb958 -1
+Cause: the telegraphed multi-turn buildup + ships locked idle in reserve make v6 far less responsive;
+any competent opponent punishes the staged commitment. **NOT SUBMITTED.** Textbook re-proof of THE
+lesson: a single-opponent (mirror) local metric misled us; the held-out cross-opponent eval is the
+reliable one. Hammer code stays in-tree but default-OFF (shipped agent byte-identical to 1017).
+
+### VERDICT: the entire tactical-port direction is exhausted and negative.
+Three rounds, all dead: (1) constant micro-tuning [prior sessions], (2) cheap 2p knobs
+(oversend/press/def_frac, all ~0/neg), (3) the structural persistent hammer (broadly -13..-33).
+v6's forward-sim BRAIN (the structural change) was the only thing that ever transferred (+105 ladder).
+**v6=1017 (hammer off) stands as our best.** Further local tactical work is low-EV; trust the ladder.
+
+### Studied a NEW public agent (LB1050) for a structural idea — found none that transfers.
+User dropped in `other_adversaries/Heuristic Simulation Agent Test 3 LB1050.py` (1050 LB, 3799 lines).
+It is a SIBLING of HEURISTIC1000 (same auto-tuned hellburner family) and — key finding — its decision
+core (`search_step_action` + `melis_evaluate` + `forward_score`) is the SAME brain + the SAME
+leader-relative value function as v6 (ships−leader + 5·planets + 8·prod, byte-for-byte). So our brain
+reimplementation was on target. Its "COUNCIL" header lists 3 portable structural deltas; ported all,
+env-gated default-OFF (shipped == 1017), tested held-out cross-opponent (`eval/confirm_ab.py`, 120
+games/opp, seedbase 200k, the discipline that caught the hammer):
+  - **SNAP_WEIGHT** (1/t snapshot weighting, vs our equal weight): net ~0 (heuristic_v2 -1, proto +1).
+  - **ARR_DECAY=0.97** (2p: discount gain by decay^arrival): folded into the above ~0 combo.
+  - **DEPTH2** (counter-response penalty: re-rank top-K captures by whether a nearby strong enemy
+    retakes the target): **SUM net -10** across 5 opps (v2 -3, hellburner -7, proto -5; lb958 +2,
+    H1000 +3). Broadly slightly negative.
+None transfers. Makes sense: same brain + same value fn ⇒ these are marginal selection tweaks that
+don't net positive in our codebase. (Harness note: confirm_ab first gave a fake +0/-0 — treatment
+env was in a module global that spawn-workers don't inherit; fixed by passing it through the job
+tuple. The `base_wr` in the depth-2 run exactly matched prior baselines, proving the plan_midgame
+restructure preserved the 1017 off-path.) **Nothing submitted. v6=1017 remains our best.**
+
+---
+
 ## 2026-05-30 — v5 REGRESSED on the ladder (918<970); ported a forward-sim "brain" (v6); submitted v2+v6.
 
 ### CRITICAL: v5 (yesterday's "best") scored 918, BELOW v2's 970. Local 4p FFA is anti-predictive.

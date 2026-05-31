@@ -63,13 +63,6 @@ from kaggle_environments.envs.orbit_wars.orbit_wars import (
     distance, point_to_segment_distance
 )
 
-# --- persistent hammer state (survives across turns; agent() re-instantiates the
-# Hellburner each turn, so cross-turn memory must live at module scope). Keyed by
-# obs['player'] so two seats sharing this module in local self-play never collide;
-# reset per-player when a new game restarts the step counter (see main()). ---
-_HAMMER_PLANS: dict = {}       # player -> active plan dict (or absent)
-_HAMMER_LAST_STEP: dict = {}   # player -> last scene_step seen (for game-restart detection)
-
 class HPlanet:
     def __init__(self, id, owner, x, y, radius, ships, production):
         self.id = id; self.owner = owner; self.x = x; self.y = y
@@ -136,55 +129,6 @@ class Hellburner:
     SEARCH_MAX_ACTIONS: int = 8                 # cap committed actions per turn
     SEARCH_MIN_GAIN: float = 1e-6               # only commit actions with positive score gain
 
-    # --- 2p tactical layer (ported from HEURISTIC1000), env-gated, default OFF ---
-    # The brain (forward-projection + leader-relative search) beats v2 by +105 on
-    # the ladder, but loses 2p h2h to H1000: diag_2p showed v6 stalls and bleeds
-    # planets in the midgame (steps 75-150). These two levers target exactly that,
-    # gated to 2p (n_sides==2) so 4p behaviour is byte-identical to the 1017 agent.
-    OVERSEND_2P: int = 0    # 2p: skip the capture-fleet trim → land full force (holds vs snipe-back)
-    PRESS_2P: int = 0       # 2p: after value search, press hold-able high-prod captures (anti-stall)
-    PRESS_2P_MAX: int = 3   # max extra captures the press pass may commit per turn
-    PRESS_2P_MIN_PROD: int = 2  # ignore prod<this junk targets in the press pass
-    DEF_PRESSURE_FRAC: float = 0.5  # 2p: share of adjacent enemy strength treated as
-                                    # counterattack pressure when sizing a source's
-                                    # held-back garrison (0.5 = v6 default; higher = more defensive)
-
-    # --- persistent staggered HAMMER (ported from HEURISTIC1000), env-gated, default OFF ---
-    # v6's brain fires every contributing fleet in ONE turn, so fleets from
-    # different-distance sources arrive on DIFFERENT turns and a reinforcing
-    # defender beats them piecemeal — v6's structural 2p weakness. The hammer
-    # commits a MULTI-TURN plan: it picks a high-prod enemy target and a set of
-    # stockpiles, then staggers each source's launch turn so the whole combined
-    # fleet LANDS ON ONE TURN, overwhelming the defender (forecast at arrival).
-    # Requires cross-turn memory (module globals below), which v6 lacks by default.
-    HAMMER_2P: int = 0          # master toggle (env V6_HAMMER); OFF => byte-identical to 1017 agent
-    HAMMER_MIN_PROD: int = 2    # only hammer enemy planets with production >= this
-    HAMMER_OVERKILL: float = 1.25   # commit >= forecast-defender-at-arrival * this
-    HAMMER_MAX_TRAVEL: int = 40     # ignore sources whose travel to target exceeds this (turns)
-    HAMMER_MIN_CONTRIB: int = 12    # a stockpile must contribute >= this many ships
-    HAMMER_MAX_SOURCES: int = 4     # cap contributors per plan
-    HAMMER_ABORT_RATIO: float = 1.1  # abort plan if defender_at_arrival > committed/this
-    HAMMER_PROD_LEAD: int = 0   # only open a plan when (my_prod - leader_prod) >= this
-
-    # --- LB1050 "council" value/search refinements (env-gated, default OFF) ---
-    # Ported from the public 1050 agent, which shares v6's EXACT brain + value
-    # function — these are pure selection tweaks, not the aggression mechanics that
-    # failed. SNAP_WEIGHT: weight near-term snapshots by 1/t (late projections carry
-    # more cascaded error). ARR_DECAY: in 2p, discount a capture's score gain by
-    # decay**arrival_turn so sooner-landing captures are preferred.
-    SNAP_WEIGHT: int = 0        # 0 = equal weight (1017); 1 = 1/t weighting (LB1050)
-    ARR_DECAY: float = 1.0      # 1.0 = off (1017); LB1050 uses 0.97 in 2p
-
-    # --- LB1050 DEPTH-2 counter-response penalty (env-gated, default OFF) ---
-    # The substantive LB1050 lever. For the top-K candidate captures, project the
-    # nearest strong enemies' counterattack at the captured planet; if they retake
-    # it, penalise the action by their strength. A pure SELECTION refinement that
-    # targets v6's diagnosed "bleed" (captures sniped back) — not aggression.
-    DEPTH2: int = 0             # master toggle (env V6_DEPTH2); 2p-only
-    DEPTH2_TOPK: int = 3        # how many top candidates to counter-check per search step
-    DEPTH2_OPPS: int = 2        # how many nearest enemies to test per candidate
-    DEPTH2_RADIUS: float = 30.0  # only enemies within this distance can counter in time
-
     def __init__(self):
         self._start_time: float = 0.0
         # Brain knobs: env overrides for sweeping. Unset => class defaults
@@ -195,32 +139,6 @@ class Hellburner:
         self.VAL_PROD_W = _envf("V6_PROD_W", Hellburner.VAL_PROD_W)
         self.SEARCH_MIN_GAIN = _envf("V6_MIN_GAIN", Hellburner.SEARCH_MIN_GAIN)
         self.SEARCH_MAX_ACTIONS = _envi("V6_MAX_ACTIONS", Hellburner.SEARCH_MAX_ACTIONS)
-        # 2p tactical knobs (default off => identical to the 1017 ladder agent).
-        self.OVERSEND_2P = _envi("V6_OVERSEND_2P", Hellburner.OVERSEND_2P)
-        self.PRESS_2P = _envi("V6_PRESS_2P", Hellburner.PRESS_2P)
-        self.PRESS_2P_MAX = _envi("V6_PRESS_MAX", Hellburner.PRESS_2P_MAX)
-        self.PRESS_2P_MIN_PROD = _envi("V6_PRESS_MIN_PROD", Hellburner.PRESS_2P_MIN_PROD)
-        self.DEF_PRESSURE_FRAC = _envf("V6_DEF_FRAC", Hellburner.DEF_PRESSURE_FRAC)
-        # persistent hammer knobs (default off => identical to the 1017 ladder agent).
-        self.HAMMER_2P = _envi("V6_HAMMER", Hellburner.HAMMER_2P)
-        self.HAMMER_MIN_PROD = _envi("V6_HAMMER_MIN_PROD", Hellburner.HAMMER_MIN_PROD)
-        self.HAMMER_OVERKILL = _envf("V6_HAMMER_OVERKILL", Hellburner.HAMMER_OVERKILL)
-        self.HAMMER_MAX_TRAVEL = _envi("V6_HAMMER_MAX_TRAVEL", Hellburner.HAMMER_MAX_TRAVEL)
-        self.HAMMER_MIN_CONTRIB = _envi("V6_HAMMER_MIN_CONTRIB", Hellburner.HAMMER_MIN_CONTRIB)
-        self.HAMMER_MAX_SOURCES = _envi("V6_HAMMER_MAX_SOURCES", Hellburner.HAMMER_MAX_SOURCES)
-        self.HAMMER_ABORT_RATIO = _envf("V6_HAMMER_ABORT", Hellburner.HAMMER_ABORT_RATIO)
-        self.HAMMER_PROD_LEAD = _envi("V6_HAMMER_PROD_LEAD", Hellburner.HAMMER_PROD_LEAD)
-        # LB1050 value/search refinements (default off => identical to 1017 agent).
-        self.SNAP_WEIGHT = _envi("V6_SNAP_WEIGHT", Hellburner.SNAP_WEIGHT)
-        self.ARR_DECAY = _envf("V6_ARR_DECAY", Hellburner.ARR_DECAY)
-        self.DEPTH2 = _envi("V6_DEPTH2", Hellburner.DEPTH2)
-        self.DEPTH2_TOPK = _envi("V6_DEPTH2_TOPK", Hellburner.DEPTH2_TOPK)
-        self.DEPTH2_OPPS = _envi("V6_DEPTH2_OPPS", Hellburner.DEPTH2_OPPS)
-        self.DEPTH2_RADIUS = _envf("V6_DEPTH2_RADIUS", Hellburner.DEPTH2_RADIUS)
-        # source planet ids reserved for future hammer launches; skipped by the
-        # value search and reinforcement pass so the stockpile stays intact.
-        self._reserved_ids: set = set()
-        self.planet_by_id: dict = {}
         # 1v1 reach (used when n_sides <= 2). v5 kept 38 here; H1000 reaches far
         # further (up to ~52) in 2p. Tunable to test the 2p-midgame-stall fix.
         self.MAXDIST_2P = _envi("V6_MAXDIST_2P", Hellburner.MAX_DISTANCE)
@@ -529,8 +447,8 @@ class Hellburner:
                         second_enemy_arrival = turn
 
         for neighbor, _ in possible_origins:
-            if neighbor.ships == 0 or neighbor.id in self._reserved_ids:
-                continue  # reserved => committed to a pending hammer launch
+            if neighbor.ships == 0:
+                continue
 
             # Cost/benefit: is exposing neighbor to worst-case enemy pressure worthwhile?
             # Only relevant when neighbor survives in the baseline — if it's already doomed, send freely.
@@ -542,17 +460,13 @@ class Hellburner:
                 worst_case_dl = {k: list(v) for k, v in self.destination_list.items()}
                 worst_case_dl.setdefault(neighbor, [])
                 half_pressure = 0
-                # DEF_2P: in 1v1, model a larger share of adjacent enemy strength as
-                # counterattack pressure (default 0.5). Higher => the source holds
-                # back a bigger garrison => fewer planets bled to H1000's snipes.
-                pres_frac = self.DEF_PRESSURE_FRAC if self.n_sides == 2 else 0.5
                 for attacker, _ in self.inbound_edges.get(neighbor, []):
                     if attacker.owner == self.player or attacker.owner == -1 or attacker.ships == 0:
                         continue
                     _, ax, ay, atk_travel = self.intercept_planet(attacker.x, attacker.y, neighbor, attacker.ships)
                     if not math.isfinite(atk_travel):
                         continue
-                    half_ships = max(1, int(attacker.ships * pres_frac))
+                    half_ships = max(1, int(attacker.ships * 0.5))
                     worst_case_dl[neighbor].append((attacker.owner, half_ships, atk_travel, attacker.x, attacker.y, ax, ay))
                     half_pressure += half_ships
 
@@ -591,11 +505,7 @@ class Hellburner:
             if trial_end_owner == self.player:
                 battle_won = True
 
-                # OVERSEND_2P: in 1v1, skip the trim so the capture lands at full
-                # force — a thicker garrison survives the opponent's snipe-back
-                # that otherwise causes v6's midgame "bleed".
-                oversend = self.OVERSEND_2P and self.n_sides == 2
-                if not_doomed and not oversend:
+                if not_doomed:
                     # Try leaving half the excess ships behind; re-simulate to confirm still winning.
                     # Never trim below 10 ships (small fleets move slowly and may miss the battle window).
                     keep = int(excess_ships // 2)
@@ -670,7 +580,7 @@ class Hellburner:
         """ Allows sending by an intermediate planet if in the way. """
         orders: FleetOrders = []
         for p in self.owned_planets:
-            if p.reinforcement_target is None or p.id in self._reserved_ids:
+            if p.reinforcement_target is None:
                 continue
             if p.ships < (self.REINFORCEMENT_SIZE + self.GARRISON_SIZE):
                 continue
@@ -1068,19 +978,16 @@ class Hellburner:
         final, snaps = self.forward_project(
             extra_arrivals=extra_arrivals, snapshot_turns=self.FWD_SNAPSHOT_TURNS)
         total = 0.0
-        wsum = 0.0
-        wt = self.SNAP_WEIGHT  # 0 => equal weight (1017); 1 => 1/t weighting (LB1050)
+        cnt = 0
         for t in self.FWD_SNAPSHOT_TURNS:
             snap = snaps.get(t)
             if snap is not None:
-                w = (1.0 / t) if wt else 1.0
-                total += self.forward_score(snap) * w
-                wsum += w
+                total += self.forward_score(snap)
+                cnt += 1
         if self.FWD_HORIZON not in self.FWD_SNAPSHOT_TURNS:
-            w = (1.0 / self.FWD_HORIZON) if wt else 1.0
-            total += self.forward_score(final) * w
-            wsum += w
-        return total / wsum if wsum else self.forward_score(final)
+            total += self.forward_score(final)
+            cnt += 1
+        return total / cnt if cnt else self.forward_score(final)
 
     def _action_for_target(self, target):
         """Concrete fleet orders to capture/defend `target`, or None. Mirrors
@@ -1103,48 +1010,16 @@ class Hellburner:
             return None
         return fleet_orders, intercepts
 
-    def _depth2_penalty(self, target, our_extra):
-        """LB1050 depth-2: worst-case opponent counterattack at `target` right after
-        we capture it. For the nearest strong enemies, project our capture PLUS that
-        enemy's counter-launch (real fleets only, no phantom); if the enemy retakes
-        the planet, penalise by its strength. Returns a value <= 0 to add to the
-        action's gain — demotes captures that immediately bleed back."""
-        worst = 0.0
-        evaluated = 0
-        tx, ty = target.x, target.y
-        enemies = sorted(
-            (ep for ep in self.planets
-             if ep.owner != self.player and ep.owner != -1 and int(ep.ships) >= 9
-             and math.hypot(tx - ep.x, ty - ep.y) <= self.DEPTH2_RADIUS),
-            key=lambda ep: math.hypot(tx - ep.x, ty - ep.y))
-        for ep in enemies:
-            opp_ships = max(8, int(ep.ships) - 5)
-            d = math.hypot(tx - ep.x, ty - ep.y)
-            opp_eta = max(1, int(math.ceil(d / self.fleet_speed(opp_ships))))
-            if opp_eta > self.FWD_HORIZON:
-                continue
-            extra = list(our_extra) + [(target.id, opp_eta, ep.owner, opp_ships)]
-            final = self.forward_project(extra_arrivals=extra, phantom=False)
-            end_owner, end_ships = final.get(target.id, (-1, 0.0))
-            if end_owner != self.player and opp_ships > end_ships:
-                worst = min(worst, -float(opp_ships))
-            evaluated += 1
-            if evaluated >= self.DEPTH2_OPPS:
-                break
-        return worst
-
     def plan_midgame(self, deadline):
         """1-ply search: repeatedly commit the capture/defense with the best
-        leader-relative projected score gain, until none helps or time is up.
-        With DEPTH2 (2p), the top-K candidates are re-ranked by a counter-response
-        penalty before committing."""
+        leader-relative projected score gain, until none helps or time is up."""
         moves: FleetOrders = []
         baseline = self._score_projection(None)
-        use_d2 = bool(self.DEPTH2) and self.n_sides == 2
         for _ in range(self.SEARCH_MAX_ACTIONS):
             if time.perf_counter() >= deadline:
                 break
-            cands = []  # (gain, target, fleet_orders, intercepts, extra)
+            best_gain = self.SEARCH_MIN_GAIN
+            best = None
             for target in sorted(self.planets, key=lambda p: p.ships, reverse=True):
                 if time.perf_counter() >= deadline:
                     break
@@ -1157,266 +1032,15 @@ class Hellburner:
                     for (_sid, _ang, ships), (_ix, _iy, travel) in zip(fleet_orders, intercepts)
                 ]
                 gain = self._score_projection(extra) - baseline
-                # LB1050 2p arrival decay: prefer captures that land sooner (later
-                # arrivals are noisier and give the opponent more time to respond).
-                if self.ARR_DECAY < 1.0 and self.n_sides == 2 and gain > 0:
-                    arrival = max((e[1] for e in extra), default=1)
-                    gain *= self.ARR_DECAY ** arrival
-                cands.append((gain, target, fleet_orders, intercepts, extra))
-            if not cands:
+                if gain > best_gain:
+                    best_gain = gain
+                    best = (target, fleet_orders, intercepts)
+            if best is None:
                 break
-            # Stable sort by -gain preserves the original ship-desc tie-break, so the
-            # DEPTH2-off path picks exactly the same action as the incremental argmax.
-            cands.sort(key=lambda c: -c[0])
-            if use_d2:
-                topk = min(self.DEPTH2_TOPK, len(cands))
-                for idx in range(topk):
-                    if time.perf_counter() >= deadline:
-                        break
-                    g, tgt, fo, ic, ex = cands[idx]
-                    cands[idx] = (g + self._depth2_penalty(tgt, ex), tgt, fo, ic, ex)
-                cands.sort(key=lambda c: -c[0])
-            best_gain, target, fleet_orders, intercepts, _ = cands[0]
-            if best_gain <= self.SEARCH_MIN_GAIN:
-                break
+            target, fleet_orders, intercepts = best
             self.commit_move_orders((target, 0, fleet_orders, intercepts))
             moves.extend(fleet_orders)
             baseline = self._score_projection(None)
-        return moves
-
-    def plan_pressure_2p(self, deadline):
-        """2p anti-stall pass (runs AFTER plan_midgame).
-
-        The value search only commits captures whose leader-relative score gain is
-        positive under the *phantom* opponent model — so when that model imagines a
-        capture being sniped back, v6 skips it and stalls. This pass presses the
-        highest-production enemy planets we can win AND hold against *known*
-        (real-fleet, non-phantom) threats, even when the phantom-discounted gain is
-        ~0. Paired with OVERSEND_2P the capture lands thick enough to actually hold.
-        Mirrors HEURISTIC1000's hammer drive to keep cracking strong-prod targets.
-        """
-        moves: FleetOrders = []
-        if self.n_sides != 2:
-            return moves
-        committed = 0
-        targets = sorted(
-            (p for p in self.planets
-             if p.owner != self.player and p.owner != -1
-             and p.production >= self.PRESS_2P_MIN_PROD),
-            key=lambda p: p.production, reverse=True)
-        for target in targets:
-            if committed >= self.PRESS_2P_MAX or time.perf_counter() >= deadline:
-                break
-            action = self._action_for_target(target)
-            if action is None:
-                continue
-            fleet_orders, intercepts = action
-            extra = [
-                (target.id, max(1, int(math.ceil(travel))), self.player, int(ships))
-                for (_sid, _ang, ships), (_ix, _iy, travel) in zip(fleet_orders, intercepts)
-            ]
-            # Hold check vs KNOWN threats only (phantom=False): commit if the
-            # capture survives the real in-flight fleets through the horizon. This
-            # is the deliberate difference from plan_midgame's phantom-pessimistic
-            # gate — it acts where the value search froze.
-            final = self.forward_project(extra_arrivals=extra, phantom=False)
-            if final.get(target.id, (-1, 0))[0] != self.player:
-                continue
-            self.commit_move_orders((target, 0, fleet_orders, intercepts))
-            moves.extend(fleet_orders)
-            committed += 1
-        return moves
-
-    # ------------------------------------------------------------------
-    # Persistent staggered hammer (v6 + cross-turn memory)
-
-    def _predict_defender(self, target, arrival_rel):
-        """Forecast (owner, ships) of `target` `arrival_rel` turns from now using
-        ONLY known in-flight fleets (no phantoms) + production growth, resolving
-        same-turn arrivals with the engine's simultaneous-combat math. Cheap,
-        per-target version of simulate_planet_timeline that reports state at a
-        specific future turn (what a hammer must out-muster)."""
-        owner = int(target.owner)
-        ships = float(target.ships)
-        prod = int(target.production)
-        buckets = defaultdict(lambda: defaultdict(float))  # turn -> {owner: ships}
-        for entry in self.destination_list.get(target, []):
-            o, s, travel = int(entry[0]), int(entry[1]), entry[2]
-            if s <= 0:
-                continue
-            eta = max(1, int(math.ceil(travel)))
-            if eta <= arrival_rel:
-                buckets[eta][o] += s
-        for t in range(1, arrival_rel + 1):
-            if owner != -1:
-                ships += prod
-            if t not in buckets:
-                continue
-            ranked = sorted(buckets[t].items(), key=lambda kv: kv[1], reverse=True)
-            top_o, top_s = ranked[0]
-            second = ranked[1][1] if len(ranked) >= 2 else 0.0
-            surv_s = top_s - second
-            surv_o = top_o if surv_s > 0 else -1
-            if surv_s > 0:
-                if surv_o == owner:
-                    ships += surv_s
-                else:
-                    ships -= surv_s
-                    if ships < 0:
-                        owner = surv_o
-                        ships = -ships
-        return owner, ships
-
-    def _build_hammer(self):
-        """Pick a high-production enemy target and a set of stockpiles whose
-        combined fleet, staggered to land on ONE turn, beats the forecast
-        defender * overkill. Returns a plan dict or None."""
-        targets = [
-            p for p in self.planets
-            if p.owner != self.player and p.owner != -1
-            and p.production >= self.HAMMER_MIN_PROD
-            and self.inbound_edges.get(p)
-        ]
-        if not targets:
-            return None
-        stockpiles = [p for p in self.owned_planets if p.ships >= self.HAMMER_MIN_CONTRIB]
-        if len(stockpiles) < 2:
-            return None
-        # Press only when not behind on production (don't over-extend while losing).
-        my_prod = sum(p.production for p in self.owned_planets)
-        prod_by_owner = defaultdict(int)
-        for p in self.planets:
-            if p.owner != -1 and p.owner != self.player:
-                prod_by_owner[p.owner] += p.production
-        leader_prod = max(prod_by_owner.values()) if prod_by_owner else 0
-        if my_prod - leader_prod < self.HAMMER_PROD_LEAD:
-            return None
-
-        best = None
-        for tgt in targets:
-            per_src = []
-            for src in stockpiles:
-                ships = int(src.ships)
-                angle, ix, iy, travel = self.intercept_planet(src.x, src.y, tgt, ships)
-                if not math.isfinite(travel) or math.ceil(travel) > self.HAMMER_MAX_TRAVEL:
-                    continue
-                if self.first_planet_hit(src.x, src.y, angle, ships, src) is not tgt:
-                    continue
-                per_src.append((int(math.ceil(travel)), src, ships))
-            if len(per_src) < 2:
-                continue
-            per_src.sort(key=lambda r: r[0])  # nearest first
-            # Provisional arrival = farthest candidate (max lead time to stagger).
-            provisional_arrival = per_src[-1][0]
-            _, d_ships = self._predict_defender(tgt, provisional_arrival)
-            required = int(math.ceil(d_ships * self.HAMMER_OVERKILL)) + 1
-            accum = 0
-            chosen = []
-            for turns, src, ships in per_src:
-                chosen.append((turns, src, ships))
-                accum += ships
-                if accum >= required or len(chosen) >= self.HAMMER_MAX_SOURCES:
-                    break
-            if len(chosen) < 2:
-                continue
-            # Tighten: real arrival is the farthest CHOSEN source; re-forecast there.
-            arrival = chosen[-1][0]
-            d_owner2, d_ships2 = self._predict_defender(tgt, arrival)
-            if d_owner2 == self.player:
-                continue
-            required2 = int(math.ceil(d_ships2 * self.HAMMER_OVERKILL)) + 1
-            if accum < required2:
-                continue
-            score = tgt.production * 10 - arrival  # prefer strong prod, near landing
-            if best is None or score > best[0]:
-                launches = {}
-                for turns, src, ships in chosen:
-                    launches[src.id] = {
-                        "fire_abs": self.scene_step + (arrival - turns),
-                        "ships": int(ships),
-                        "fired": False,
-                    }
-                best = (score, {
-                    "target_id": tgt.id,
-                    "arrival_abs": self.scene_step + arrival,
-                    "committed": int(accum),
-                    "launches": launches,
-                })
-        return best[1] if best else None
-
-    def plan_hammer(self):
-        """Per-turn hammer driver. Validates/builds the persistent plan, fires any
-        launches whose staggered fire-turn has arrived, and reserves the sources of
-        still-pending launches. Returns the fleet orders launched THIS turn."""
-        self._reserved_ids = set()
-        moves: FleetOrders = []
-        if not self.HAMMER_2P or self.n_sides != 2:
-            return moves
-
-        plan = _HAMMER_PLANS.get(self.player)
-        if plan is not None:
-            tgt = self.planet_by_id.get(plan["target_id"])
-            arrival_rel = plan["arrival_abs"] - self.scene_step
-            invalid = (tgt is None or tgt.owner == self.player or arrival_rel <= 0)
-            if not invalid:
-                _, d_ships = self._predict_defender(tgt, arrival_rel)
-                if d_ships > plan["committed"] / self.HAMMER_ABORT_RATIO:
-                    invalid = True  # defender over-reinforced past what we committed
-            if not invalid:
-                for sid, l in plan["launches"].items():
-                    if l["fired"]:
-                        continue
-                    src = self.planet_by_id.get(sid)
-                    if src is None or src.owner != self.player:
-                        invalid = True  # lost a pending contributor
-                        break
-            if invalid:
-                _HAMMER_PLANS.pop(self.player, None)
-                plan = None
-
-        if plan is None:
-            plan = self._build_hammer()
-            if plan is not None:
-                _HAMMER_PLANS[self.player] = plan
-        if plan is None:
-            return moves
-
-        tgt = self.planet_by_id.get(plan["target_id"])
-        if tgt is None:
-            _HAMMER_PLANS.pop(self.player, None)
-            return moves
-
-        pending = False
-        for sid, l in plan["launches"].items():
-            if l["fired"]:
-                continue
-            src = self.planet_by_id.get(sid)
-            if src is None or src.owner != self.player:
-                l["fired"] = True
-                continue
-            if l["fire_abs"] > self.scene_step:
-                self._reserved_ids.add(sid)  # hold this stockpile for its launch turn
-                pending = True
-                continue
-            ships = min(int(l["ships"]), int(src.ships))
-            if ships < self.HAMMER_MIN_CONTRIB:
-                l["fired"] = True
-                continue
-            angle, ix, iy, travel = self.intercept_planet(src.x, src.y, tgt, ships)
-            if not math.isfinite(travel) or \
-                    self.first_planet_hit(src.x, src.y, angle, ships, src) is not tgt:
-                l["fired"] = True
-                continue
-            # commit: deduct ships + register the fleet so the brain treats it as in-flight
-            src.ships = max(0, src.ships - ships)
-            self.destination_list.setdefault(tgt, [])
-            self.destination_list[tgt].append(
-                (self.player, ships, travel, src.x, src.y, ix, iy))
-            moves.append([sid, angle, ships])
-            l["fired"] = True
-
-        if not pending or all(l["fired"] for l in plan["launches"].values()):
-            _HAMMER_PLANS.pop(self.player, None)
         return moves
 
     # ------------------------------------------------------------------
@@ -1433,17 +1057,6 @@ class Hellburner:
         self.owned_planets = [p for p in self.planets if p.owner == self.player]
         self.enemy_planets = [p for p in self.planets if p.owner != self.player]
         self.fleets = [Fleet(*f) for f in obs['fleets']]
-        self.planet_by_id = {p.id: p for p in self.planets}
-        self._reserved_ids = set()
-
-        # Persistent hammer memory: drop a stale plan when a new game restarts the
-        # step counter (or a seat is reused in local self-play). Only touched when
-        # the hammer is enabled, so the default path stays identical to the 1017 agent.
-        if self.HAMMER_2P:
-            prev_step = _HAMMER_LAST_STEP.get(self.player, -1)
-            if self.scene_step <= prev_step:
-                _HAMMER_PLANS.pop(self.player, None)
-            _HAMMER_LAST_STEP[self.player] = self.scene_step
 
         if not self.enemy_planets:
             return []
@@ -1473,19 +1086,10 @@ class Hellburner:
 
         self.build_reinforcement_targets()
 
-        # Persistent staggered hammer FIRST (no-op unless V6_HAMMER set): it fires
-        # due launches and reserves the stockpiles of pending ones, so the value
-        # search below won't spend ships the hammer is holding for a future turn.
-        hammer_moves = self.plan_hammer()
-
         # v6: replace v5's greedy "highest-production winnable target" loop with a
         # 1-ply search over the leader-relative forward-projection value function.
         deadline = self._start_time + self.SEARCH_SOFT_BUDGET
-        moves = hammer_moves + self.plan_midgame(deadline)
-
-        # 2p tactical pass (no-op unless V6_PRESS_2P set; 4p-identical to the 1017 agent)
-        if self.PRESS_2P and self.n_sides == 2:
-            moves.extend(self.plan_pressure_2p(deadline))
+        moves = self.plan_midgame(deadline)
 
         reinforcement_orders = self.send_reinforcements()
         if reinforcement_orders:

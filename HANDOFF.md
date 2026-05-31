@@ -1,25 +1,28 @@
-# Orbit Wars — Hand-off (2026-05-30)
+# Orbit Wars — Hand-off (2026-05-31)
 
 Short version for the team. Full detail in `diary.md` (top entry).
 
-## TL;DR (2026-05-30 — supersedes the 05-29 note)
-- **Proven best is `agents/heuristic_v2.py` = Kaggle 970** (bug-fixed `hellburner`, reach 38).
-- **`heuristic_v5` REGRESSED to ~915 on the ladder — BELOW v2's 970.** Its only change
-  (MAX_DISTANCE 38→30 in 4p) won local 4p FFA by +21..+35 but LOST 52 ladder points. The
-  05-29 "v5 is best" claim is **WRONG**. This is the 2nd local-4p-FFA win that regressed the
-  ladder (teammate's 945 too). **⇒ Our local 4p FFA metric is anti-predictive for reach/
-  aggression tuning. Trust ONLY ladder submissions for these.**
-- **`agents/heuristic_v6.py` — new EXPERIMENT (submitted, pending):** our own reimplementation
-  of the public ~1000-1100 agent's decision core (global forward-projection + LEADER-RELATIVE
-  value + 1-ply search) on v2's machinery & reach-38, so the ONLY diff from v2 is the brain.
-  Local: beats v2-2p ~60% in 2p, ~tied 4p, timing-safe, 0 exc. **Whether it beats 970 is
-  unknown until the ladder converges** — that's why it's submitted.
+## TL;DR (2026-05-31 — supersedes the 05-30 note)
+- **Our best is now `agents/heuristic_v6.py` = Kaggle 1017.2** (forward-sim brain on v2's reach-38).
+  It is the team's active/top submission.
+- **v6 beat v2 by +105 in a controlled same-day paired test:** v6 = 1017.2, a fresh re-submit of
+  the *identical* v2 = 911.7, both submitted within 2 min on 05-30 and converged ~24h against the
+  same opponent pool. The forward-projection + leader-relative + 1-ply-search BRAIN transfers —
+  this was the open question, now answered yes.
+- **Cross-day absolute scores are untrustworthy (proven):** the same v2 code scored 970.0 on 05-28
+  but 911.7 on 05-30. The ladder scale drifts as competitors strengthen. **Only same-day pairings
+  are reliable.** (This is why we re-submitted v2 next to v6 — to get a clean control.)
+- **`heuristic_v5` REGRESSED (914.7) — do NOT ship.** Its MAX_DISTANCE 38→30 in 4p won local 4p FFA
+  by +21..+35 but lost ladder points. 2nd local-4p-FFA win that regressed the ladder. **⇒ local 4p
+  FFA win-share is anti-predictive for reach/aggression tuning. Trust ONLY ladder for those.**
+- **IN PROGRESS:** porting HEURISTIC1000's 2p tactical layer (hammer, multiprong, anti-snipe,
+  defensive reserve) onto v6 — the plan's triggered contingency now that the brain is proven.
 
-## Submissions today (2026-05-30)
-- **53185991 — heuristic_v2 (reach 38):** re-submitted to make the proven 970 the ACTIVE agent
-  (v5/915 had been the latest = our *worse* agent was live).
-- **53186031 — heuristic_v6:** the brain experiment (rebased to reach-38). PENDING.
-- Read converged scores in HOURS, not early. The KEY question: does v6 (brain) beat v2's 970?
+## Submission history (key rows)
+- **53186031 — heuristic_v6 (brain, reach 38): 1017.2** ← current best / active.
+- **53185991 — heuristic_v2 (re-submit, reach 38): 911.7** (control; same code scored 970 on 05-28).
+- **53154166 — heuristic_v5 (reach 30 in 4p): 914.7** ← regressed, do not ship.
+- **53118635 — heuristic_v2 (first submit): 970.0** (05-28 scale — not comparable to 05-30 numbers).
 
 ## The scores converged (this is the whole lesson)
 Kaggle Arena scores drift for *hours*. Final converged public scores:
@@ -48,6 +51,18 @@ Takeaways:
 - **v4** (`heuristic_v4.py`): loosen 4p threat model. Local 30.5% vs v2 38% (7.5pt worse). Not shipped.
 - **v6 2p-aggression knobs** (`eval/sweep_v6_2p.py`): NO knob closes the 2p gap to HEURISTIC1000;
   longer 2p reach is sharply harmful (−11/−15). The 2p gap is structural, not tunable.
+- **v6 cheap 2p tactical knobs** (oversend / press / def_frac, `V6_*`, all default-OFF): paired N=60
+  vs H1000 all neutral-to-negative (oversend +0, press +0 inert, def_frac −3). Dead.
+- **v6 PERSISTENT STAGGERED HAMMER** (`V6_HAMMER`, default-OFF, the big 05-31 build): looked +12 vs
+  the v6 *mirror* but the held-out cross-opponent confirm (`eval/confirm_hammer.py`) showed it is
+  WORSE vs every opponent — heuristic_v2 −33, adv_hellburner −25, proto_v15 −13, H1000 −7, lb958 −1.
+  Telegraphed buildup + reserved-idle ships kills responsiveness. **NOT shipped.** ⇒ The whole
+  tactical-port direction is exhausted; only the structural BRAIN ever transferred. Hold v6=1017.
+- **LB1050 "council" refinements** (`V6_SNAP_WEIGHT`, `V6_ARR_DECAY`, `V6_DEPTH2`, all default-OFF):
+  LB1050 (new in-repo, 1050 LB) is an H1000 sibling with the SAME brain+value-fn as v6. Ported its 3
+  structural deltas; held-out A/B (`eval/confirm_ab.py`): snap-weight ~0, arr-decay ~0, depth-2 SUM
+  net −10 (v2 −3/hellburner −7/proto −5, lb958 +2/H1000 +3). None transfers. **NOT shipped.**
+  ⇒ Studying stronger same-family agents is tapped out — they share our brain. Hold v6=1017.
 
 ## v6 brain (the current experiment) — how it works & what's left
 - `forward_project()` projects all planets forward ~18 turns w/ phantom opponent launches;

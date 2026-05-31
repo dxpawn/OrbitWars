@@ -22,17 +22,21 @@ warnings.filterwarnings("ignore")
 from eval.ffa4 import wilson95  # noqa: E402
 
 V6_KEYS = ["V6_FWD_HORIZON", "V6_EMIT_FRAC", "V6_PLANET_W", "V6_PROD_W",
-           "V6_MIN_GAIN", "V6_MAX_ACTIONS", "V6_MAXDIST_2P"]
+           "V6_MIN_GAIN", "V6_MAX_ACTIONS", "V6_MAXDIST_2P",
+           "V6_OVERSEND_2P", "V6_PRESS_2P", "V6_PRESS_MAX", "V6_PRESS_MIN_PROD",
+           "V6_DEF_FRAC", "V6_HAMMER", "V6_HAMMER_OVERKILL", "V6_HAMMER_PROD_LEAD",
+           "V6_HAMMER_MIN_CONTRIB", "V6_HAMMER_MAX_TRAVEL"]
 
-# Hypotheses for the 2p midgame stall (one knob each):
+# Round 1 (N=60) — cheap tactical knobs are dead: oversend +0, press +0 (inert),
+# def_frac -3. Round 2 = the persistent STAGGERED HAMMER (V6_HAMMER): multi-turn
+# plans that land a combined fleet on ONE turn (cross-turn memory). Test the
+# default + a couple of aggression/selectivity variants, paired vs H1000.
 CONFIGS: list[tuple[str, dict]] = [
     ("baseline (v6 2p)", {}),
-    ("MAXDIST_2P=46", {"V6_MAXDIST_2P": "46"}),
-    ("MAXDIST_2P=54", {"V6_MAXDIST_2P": "54"}),
-    ("EMIT=0.05", {"V6_EMIT_FRAC": "0.05"}),
-    ("MIN_GAIN=-3", {"V6_MIN_GAIN": "-3"}),
-    ("PROD_W=12", {"V6_PROD_W": "12"}),
-    ("MAX_ACTIONS=16", {"V6_MAX_ACTIONS": "16"}),
+    ("hammer", {"V6_HAMMER": "1"}),
+    ("hammer ovk1.5", {"V6_HAMMER": "1", "V6_HAMMER_OVERKILL": "1.5"}),
+    ("hammer lead4", {"V6_HAMMER": "1", "V6_HAMMER_PROD_LEAD": "4"}),
+    ("hammer contrib20", {"V6_HAMMER": "1", "V6_HAMMER_MIN_CONTRIB": "20"}),
 ]
 
 _OPP = "adv_heuristic1000"
