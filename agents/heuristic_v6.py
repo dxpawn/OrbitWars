@@ -132,6 +132,13 @@ class Hellburner:
                                                 # snipe-blind, higher is over-pessimistic.
     VAL_PLANET_W: float = 5.0                   # value of a planet-count lead (in ships)
     VAL_PROD_W: float = 8.0                     # value of a production lead (in ships)
+    FWD_SELF_EMIT: float = 0.5                  # phantom self-launch rate vs opponents' full
+                                                # rate. 0.5 (default/1017) = the brain models
+                                                # ITSELF launching at half the opponents' rate
+                                                # → asymmetric pessimism that makes projected
+                                                # captures look snipe-able and FREEZES the
+                                                # midgame (the diagnosed 2p stall). Higher =
+                                                # less self-pessimistic. Structural, untested.
     SEARCH_SOFT_BUDGET: float = 0.85            # s; per-turn deadline (actTimeout is 1.0)
     SEARCH_MAX_ACTIONS: int = 8                 # cap committed actions per turn
     SEARCH_MIN_GAIN: float = 1e-6               # only commit actions with positive score gain
@@ -193,6 +200,7 @@ class Hellburner:
         self.FWD_EMIT_FRAC = _envf("V6_EMIT_FRAC", Hellburner.FWD_EMIT_FRAC)
         self.VAL_PLANET_W = _envf("V6_PLANET_W", Hellburner.VAL_PLANET_W)
         self.VAL_PROD_W = _envf("V6_PROD_W", Hellburner.VAL_PROD_W)
+        self.FWD_SELF_EMIT = _envf("V6_SELF_EMIT", Hellburner.FWD_SELF_EMIT)
         self.SEARCH_MIN_GAIN = _envf("V6_MIN_GAIN", Hellburner.SEARCH_MIN_GAIN)
         self.SEARCH_MAX_ACTIONS = _envi("V6_MAX_ACTIONS", Hellburner.SEARCH_MAX_ACTIONS)
         # 2p tactical knobs (default off => identical to the 1017 ladder agent).
@@ -989,7 +997,7 @@ class Hellburner:
                             best_d2, best = d2, opid
                     if best is None:
                         continue
-                    frac = emit_frac * (0.5 if owner == self.player else 1.0)
+                    frac = emit_frac * (self.FWD_SELF_EMIT if owner == self.player else 1.0)
                     emit = int(st[1] * frac)
                     if emit < 5:
                         continue
