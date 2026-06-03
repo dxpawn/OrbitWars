@@ -8,7 +8,7 @@ the real-world adversaries dumped into ../other_adversaries/.
 import os
 
 from agents import heuristic_v1, heuristic_v2, heuristic_v3, heuristic_v4, heuristic_v5, heuristic_v6, heuristic_v6_1017, heuristic_tune
-from opponents import defender, do_nothing, nearest_sniper, random_bot, rusher
+from opponents import defender, do_nothing, nearest_sniper, random_bot, rusher, friend_transformer, distilled
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ADV = os.path.abspath(os.path.join(_HERE, "..", "other_adversaries"))
@@ -42,6 +42,8 @@ REGISTRY: dict[str, object] = {
     "adv_proto_v15": os.path.join(_ADV, "Proto-V15.py"),
     "adv_in_progress": os.path.join(_ADV, "inProgress.py"),
     "adv_heuristic1000": os.path.join(_ADV, "HEURISTIC1000.py"),  # user reports 1000-1100 LB, beats teammate
+    "adv_friend_tf": friend_transformer.agent,  # imitation-transformer re-ranker, LB ~1140.9 (the teacher)
+    "ours_distilled": distilled.agent,           # OUR student re-ranker on the reused hull (the deliverable)
 }
 
 

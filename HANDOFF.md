@@ -1,8 +1,41 @@
-# Orbit Wars — Hand-off (2026-05-31)
+# Orbit Wars — Hand-off (2026-06-02)
 
 Short version for the team. Full detail in `diary.md` (top entry).
 
-## TL;DR (2026-05-31 — supersedes the 05-30 note)
+## ⚡ PIVOT (2026-06-02 cont.) — building a learned target re-ranker (distill the LB-1140 transformer)
+- **Heuristic knob-tuning is exhausted/proven dead on the ladder.** `VAL_PROD_W=16` (53264512) settled
+  **~910** — did NOT transfer despite +14 local 2p. exp30 (LB1072 = HEURISTIC1000 + one 2p-cap line) is a
+  knob we already have (saturated). The whole heuristic field caps ~1000-1072.
+- **New paradigm (the real competition is an RL-class relative/winner-take-all grade):** a friend gave us
+  his **LB 1140.9** agent with full permission. It's a **heuristic hull + a learned 46-feature TARGET
+  RE-RANKER** (imitation-trained on top players, pure-Python transformer, separate 2p/4p). We will NOT ship
+  his file — we **distill his model (as an oracle) into OUR OWN re-ranker on OUR hull**, then RL-finetune to
+  **beat 1140**. Folder: `other_adversaries/submission_feature46_transformer_v2_late_recapture_2p_v1/`.
+- **Phase 0 de-risk DONE:** his `score_many` works as a standalone oracle (distillation viable ✓); v6 is
+  already **3-3 vs him in 2p** → his edge is in **4p**, which focuses the re-ranker. Registered as
+  `adv_friend_tf`. We already have an `rl/` stack (policy/ppo/imitation/features) to reuse.
+- **Plan = 5 phases (tasks #3-7):** feature encoder on our hull → distill dataset (our features→his scores,
+  64-way parallel) → train+export pure-Python student → integrate+validate+submit → RL-finetune past 1140.
+- **Compute:** 36c/72t, CPU-bound, parallel at ~64. No GPU needed (small net; rollouts dominate).
+- Full detail: `diary.md` top entry. Fallbacks intact (`heuristic_v6_1017`, v6 brain 997.5, team best 1016.5).
+
+## TL;DR (2026-06-02 — superseded by the PIVOT note above; PROD_W=16 settled ~910, did NOT transfer)
+- **Ladder state:** team best is now **1023.5** (ref 53244971) + **1016.5** (53244319), both 06-01.
+  Our v6 brain (53186031) **drifted 1017→997.5**. Best-of-N ranking, so the team sits at 1023.5.
+- **NEW transferable lever found: `VAL_PROD_W` 8 → 16.** Held-out 2p A/B (`eval/confirm_ab.py`,
+  diverse pool, 2 seedbases): **+14 net broad, replicated** (12=+11, 16=+14, monotonic). **4p FFA
+  neutral** (`eval/ffa4.py`, 500 games: 50.2%→49.4%, n.s.). First lever since the brain to pass the
+  held-out test that killed the hammer/self-emit/LB1050 tweaks. By our signal hierarchy (2p h2h is
+  ladder-predictive; 4p FFA anti-predictive) this should be net-positive on the mixed ladder.
+- **SUBMITTED for validation: ref 53264512** (v6 brain + `VAL_PROD_W=16`, the ONLY diff), 06-01 18:29
+  UTC, PENDING. It's a marginal change on the v6 base (997.5) so it likely lands **below 1023.5** —
+  it won't take #1, but best-of can't hurt rank. **Purpose: confirm the +14 2p gain transfers to the
+  ladder vs v6's 997.5.** If it does, carry `VAL_PROD_W=16` onto the stronger 1023.5 line.
+- **DEAD this session:** phantom self-emit rate (`V6_SELF_EMIT`) — noise (+6 then −4 on 2nd seedbase).
+- `submission.py` = the shipped file (one-line PROD_W change). **Uncommitted** — commit when ready.
+  Quota: 5/UTC-day shared; 3 used on 06-01 (2 teammate + this), **2 left today**.
+
+## TL;DR (2026-05-31 — superseded by the 06-02 note above)
 - **Our best is now `agents/heuristic_v6.py` = Kaggle 1017.2** (forward-sim brain on v2's reach-38).
   It is the team's active/top submission.
 - **v6 beat v2 by +105 in a controlled same-day paired test:** v6 = 1017.2, a fresh re-submit of

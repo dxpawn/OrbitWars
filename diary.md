@@ -4,6 +4,222 @@ Reverse-chronological log of decisions, setup, training runs, and results. Newes
 
 ---
 
+## 2026-06-02 (cont. 2) — DISTILLATION PIPELINE BUILT + TRAINED + INTEGRATED + SUBMITTED (53292001).
+
+> **✅ RESULT: 53292001 jumped 878 → 885 → 1110.6 (still converging) — DISTILLATION TRANSFERRED.**
+> New TEAM BEST (prev 1016.5), +113 over our v6 (997), only ~30 below the friend's 1140. Status COMPLETE
+> (the base64 single-file bundle loaded + ran on Kaggle — packaging validated). Our own model, his
+> transformer never shipped, 14× faster. The local-4p anti-prediction held one more time: ours scored
+> 43.8% locally yet ~1110 on the ladder. Distillation alone ≈ his level; Stage-2 RL-finetune still needed
+> to EXCEED 1140 (winner-take-all class). Monitoring for further climb.
+>
+> **SUBMITTED `submission_distilled.py` → ref 53292001.** Single-file base64 bundle (660 KB):
+> his `orbit_base` hull + `main` feature extractor + OUR `student_weights_{2p,4p}` (renamed to the
+> `feature46_weights_*` names his main imports). His 7.6 MB transformer NOT included. Built by
+> `scripts/build_distilled_submission.py` (loads each source as a real sys.modules module → no
+> agent/_nearest_targets name clash; decode utf-8-sig to strip his BOM). Selftest: won a 4p game
+> [4301,0,0,0]. Quota 2/5 used (3 free). **This is the only valid test — see the timing finding below.**
+>
+> **KEY: local 4p eval is INVALID for these agents (the friend's LB-1140 agent scores 25% = RANDOM
+> locally).** Per-turn timing probe (`turns>1s`): friend max=1.703s, **21/140 turns >1s** → his pure-
+> Python transformer TIMES OUT locally (moves dropped → random). OURS: max=0.123s, mean=0.042s, **0
+> timeouts, 0 exc** — ~14× faster (we replaced his transformer with our MLP). So ours is a faithful
+> (76%/95% top1/3), MUCH faster, timing-safe copy of the 1140 policy. Local 4p (v6 45.8% / ours 43.8% /
+> friend 25%) can't rank them — ladder is ground truth. Monitoring 53292001.
+
+Executed the pivot. Full distill stack built and validated in one session. **Decision (user): reuse
+his feature extractor as a library; the MODEL must be ours.** So no feature reimpl — we reuse his
+`orbit_base` hull + `_candidate_features`, train OUR scorer to replace his transformer.
+
+### Pipeline (all new files, all validated)
+- **`rl/distill_collect.py`** — monkey-patches his `feature46_weights_{2p,4p}.score_many` to log
+  every `(46-feature row -> his raw logit)` as his agent plays; parallel 2p+4p games vs a fast pool;
+  per-worker `.npz` shards. **Dataset: `rl/distill_data/dataset.npz` = 227k (2p) + 284k (4p) = 511k rows.**
+- **`rl/distill_train.py`** — trains a small MLP (46->64->64->1, ReLU, MSE on his logit) per mode on
+  GPU; **exports pure-Python `rl/student/student_weights_{2p,4p}.py`** whose `score_many` is a math-only
+  drop-in for his. Results: **2p R²=0.862, 4p R²=0.852, pearson ~0.92.**
+- **`rl/validate_student.py`** — the RIGHT fidelity metric: per candidate-set, argmax(our)==argmax(his)?
+  **2p top1=75.1% / top3=94.7% / Spearman=0.80; 4p top1=77.5% / top3=94.8% / Spearman=0.85.**
+- **`opponents/distilled.py`** (registered **`ours_distilled`**) — loads his `main.py` but injects our
+  student under the name `feature46_weights_{2p,4p}` (then restores sys.modules), so his hull + features
+  run with OUR scorer. **His 7.6 MB transformer NEVER loads.** Verified: plays, beat v6 in a sample game.
+
+### Key findings
+- **The pointwise distillation ceiling ≈ 76% top1 / 95% top3 is the teacher's CROSS-CANDIDATE ATTENTION,
+  not capacity.** A 256-wide student raised R² (0.88) but did NOT improve top1 (73.6%). His score for a
+  target depends on the other candidates; our per-row MLP can't see that. **Locked the 64-wide student**
+  (equal behavioral fidelity, faster inference). 95% top-3 + his SOFT re-rank (idx − bonus·sigmoid, bonus
+  1.25-1.45) ⇒ actual chosen actions stay close to his. Good enough — beating 1140 is an RL job, not
+  perfect mimicry.
+- **Packaging is easy:** the friend submitted a multi-file FOLDER (he's on the LB at 1140), so Kaggle
+  supports folder submissions here. Our submission = his `orbit_base.py` + `main.py` + OUR
+  `student_weights` renamed to `feature46_weights_{2p,4p}.py`. (Confirm single-file-vs-folder mechanics
+  before submitting — diary's old "tarball rejected" was early-v2; the friend proves multi-file works.)
+
+### Operational pitfalls (recorded — cost real time)
+- **His agent is computationally HEAVY locally** (~2.5× game time; pure-Python transformer scoring every
+  candidate every turn). Benchmarks where he PLAYS are straggler-bound. **Data-gen avoids this only partly
+  (he still plays to generate on-policy states); the deployed agent inherits his feature-extraction cost
+  but swaps the transformer for a fast MLP → ours is ≤ his per-turn time → within Kaggle's 1s budget.**
+- **Killing his game processes leaves ORPHANS** that survive `TaskStop` and keep burning cores (saw 64
+  procs 100+ min old). Cleanup: `Get-CimInstance Win32_Process -Filter "Name='bash.exe'"` → kill the
+  ones whose CommandLine matches `eval\.ffa4|distill_collect|...`, THEN `Stop-Process python`. **Prefer
+  letting bounded runs COMPLETE over killing.**
+
+### Status / next
+- Phase 0-3 done (tasks #3-6). **Phase 4 (validate+submit) in progress (#7):** a clean 4p win-share
+  (v6 vs ours_distilled vs friend) is running to quantify how much of his 1140 distillation captured.
+  Then: package + submit `ours_distilled` (ladder = ground truth; local 4p is slow/unreliable here),
+  then **Stage 2 — RL-finetune the re-ranker on outcomes (`rl/ppo.py`) to EXCEED 1140** (class is
+  winner-take-all; distillation only ties). GPU available (torch 2.9 cu126). 36c/72t, parallel ~48-64.
+
+---
+
+## 2026-06-02 (cont.) — STRATEGIC PIVOT: distill a friend's LB-1140 imitation-transformer into OUR OWN learned target re-ranker
+
+### Why we pivoted (local heuristic tuning is exhausted — proven on the ladder)
+- **`VAL_PROD_W=16` (53264512) settled ~910 on the ladder — does NOT transfer.** It won +14 net broad
+  in local 2p across 2 seedbases and was 4p-neutral, yet landed ~90 BELOW our v6 base (997.5). The
+  Nth confirmation that **local eval (even paired 2p h2h) over-predicts; only the ladder is truth.**
+- **exp30 (LB~1072) = HEURISTIC1000 + ONE line** (`SEARCH_MAX_ACTIONS_TO_PICK_2P` 7→9). Ported as our
+  2p-gated `SEARCH_MAX_ACTIONS_2P`; held-out screen 9/10/12 all FLAT (+1/+1/+0) — **saturated, we
+  already sit at 8.** The sibling-agent vein (H1000/LB1050/exp30, all share our brain) is fully mined.
+- ⇒ Knob-hunting on the heuristic hull is over. The whole field is stuck ~1000-1072; the ONLY thing
+  ~140 pts above is a different paradigm.
+
+### THE CONTEXT (changes everything)
+This is fundamentally a **university RL-class competition graded RELATIVE / winner-take-all** (top team
+takes the points; others scaled down by rank), using the Kaggle LB as the scoreboard. A friend (NOT in
+the class, impersonating a team to sabotage the curve) shared his **LB 1140.9** agent and gave **full
+permission to do whatever** with it. We will NOT submit his file ("his shit") — we build OUR OWN, using
+his agent as teacher/oracle/benchmark. Goal: **beat ~1140 to win the class.**
+
+### WHAT HIS AGENT IS (the winning recipe, decoded)
+Folder: `other_adversaries/submission_feature46_transformer_v2_late_recapture_2p_v1/`
+(`main.py` + `orbit_base.py` heuristic hull + `feature46_weights_2p.py`/`_4p.py` = pure-Python `math`-only
+transformer weights, ~3.8 MB each + `feature46_manifest.json`).
+- **NOT a full policy.** It's a heuristic hull (hellburner-family: aiming, combat sim, fleet sizing,
+  reinforcement) with a **learned TARGET RE-RANKER bolted on.** `main.py` monkey-patches
+  `base._nearest_targets`: take the heuristic's candidate targets, expand (+10), compute **46 hand-
+  engineered features per (src,target)** (`_candidate_features` / `FEATURE_NAMES`), score them through
+  the transformer (`score_many`), re-sort by `adjusted = idx − bonus·sigmoid(score)` (bonus 1.45 2p /
+  1.25 4p), execute on the re-ordered targets.
+- **Trained by IMITATION**: he crawled top players' game steps and trained the transformer to predict
+  which target a top player picks. Separate 2p/4p models. Pure-Python (no torch) → runs in Kaggle sandbox.
+- **Why it's ~140 above the heuristic family:** it learned the single highest-leverage decision (target
+  selection) from the people already winning, incl. **temporal/trend features** (momentum, enemy rhythm,
+  approach-rate, convergence-threat over a rolling history) that our stateless v6 brain cannot see.
+
+### THE PLAN — distill his oracle into our own re-ranker, then RL past him
+Two-stage. We have his trained model as a perfect ORACLE (we own permission), so we **skip replay-crawling**.
+- **Stage 1 (floor ≈1140): knowledge distillation.** Generate states cheaply (our hull / pool play),
+  label each candidate with HIS `score_many`, train OUR student to match. Gets us ~his level with OUR weights.
+- **Stage 2 (exceed >1140): RL-finetune** the re-ranker on actual game OUTCOMES (we have `rl/ppo.py`) —
+  optimize for winning, not for imitating his picks. He's static; we improve → we pass him.
+
+5 phases (tasks #3-7):
+- **Ph0 De-risk/benchmark** (in progress): see results below.
+- **Ph1** Reimplement the 46-feature encoder on OUR hull (heuristic_v6 data structures), faithful to his
+  spec. Consistency-check: feed OUR features into HIS scorer → must reproduce his target picks.
+- **Ph2** Generate distillation dataset (our features → his scores), 2p + 4p, 64-way parallel.
+- **Ph3** Train + export pure-Python student (start MLP 46→hidden→1, ranking loss); validate rank-corr vs teacher.
+- **Ph4-5** Bolt onto our hull, held-out eval vs pool INCLUDING the friend, submit; then Stage-2 RL.
+
+### DESIGN DECISIONS (locked)
+- **Our hull + our model + distillation labels = defensibly OURS** (it's an RL class; deliverable must be
+  ours if audited). Knowledge distillation is a standard legit technique; resulting weights are ours.
+- **Friend registered as `adv_friend_tf`** (lazy loader `opponents/friend_transformer.py`: loads his `main.py`
+  under a unique module name with his folder on sys.path; ~7.6 MB import deferred to first call). Usable as
+  benchmark opponent AND in the eval/data-gen pool.
+- **Compute: 36 physical / 72 logical cores. Everything is CPU-bound & embarrassingly parallel** (game
+  sim/rollouts/data-gen). Run pools at ~64. GPU only helps Ph3 training of a small net (minutes on CPU
+  anyway); RL rollouts are CPU. Deployed re-ranker MUST stay pure-Python <1s/turn (his runs ~0.2-0.3s/turn,
+  ~2.5× slower games — a model-size constraint).
+
+### PHASE 0 RESULTS (de-risk)
+- **ORACLE USABLE ✓** — `feature46_weights_2p/4p.score_many(rows)` returns finite scores standalone (46-dim
+  input). Distillation is viable; the whole plan is de-risked.
+- **v6 vs friend, 2p: 3–3 (of 6).** Our heuristic v6 is ALREADY competitive head-to-head in 2p! ⇒ his
+  ~140-pt ladder edge is almost certainly in **4p FFA** (the dominant ladder format), NOT 2p. (A larger
+  64-way parallel benchmark — 2p h2h + 4p win-shares for v6 vs friend vs strong pool — is running to confirm;
+  it will FOCUS the re-ranker, possibly 4p-only.)
+- We already have a full RL stack from earlier: `rl/policy.py` (entity-transformer), `rl/collect_imitation.py`,
+  `rl/imitation_train.py`, `rl/ppo.py`, `rl/features.py`, `checkpoints/final.pt`. That effort stalled
+  (full-policy RL is hard; we shipped heuristics). The re-ranker reframe is the tractable reuse.
+
+### Fallbacks preserved
+- `heuristic_v6_1017.py` (frozen 1017) + `submission.py` (now PROD_W=16, but that's ~910 — revert to 8 if we
+  want the cleaner v6). Team best on the board remains the teammate's 1016.5 (53244319). v6 brain 997.5.
+
+---
+
+## 2026-06-02 — First transferable lever since the brain: VAL_PROD_W 8→16 (broad +14 net 2p, 4p-neutral). Submitted 53264512.
+
+> **LADDER VERDICT (later 06-02): 53264512 settled ~910 — DID NOT TRANSFER.** Plateaued 558→923→912→910,
+> ~90 below the v6 base (997.5). The broad replicated +14 local-2p gain did not move the real ladder —
+> local eval over-predicted again. Lever shelved; see the pivot entry above. submission.py currently still
+> carries PROD_W=16 (harmless, best-of protects rank); revert to 8 if we want the clean v6 back.
+
+
+Task: "keep finding ways to improve the agent." Worked the **structural** knobs of the v6 brain
+(the only category that has ever transferred to the ladder), under strict held-out discipline.
+
+### Methodology hardened this session
+- **Noise floor ≈ ±5 net @ 120 games/opp** (paired, `eval/confirm_ab.py`). Established empirically:
+  self-emit screened +6 then **−4** on a second seedbase. ⇒ **nothing under ~+8 on a single screen
+  is trustworthy; require replication on a 2nd seedbase + a monotonicity check** (a real effect
+  trends with the parameter; noise is non-monotonic).
+- **Signal hierarchy (from prior entries, re-applied):** 2p h2h vs a fixed opponent is the
+  *ladder-predictive* signal; 4p FFA win-share has been *anti*-predictive (v5); the ladder is
+  mixed FFA+2p. So the bar for a real candidate = **broad 2p gain (replicated) AND no 4p regression.**
+
+### DEAD lever: phantom self-emit rate (`FWD_SELF_EMIT`, new env `V6_SELF_EMIT`, default 0.5)
+The brain models itself launching phantom fleets at 0.5× the opponents' rate (asymmetric pessimism,
+hypothesised cause of the midgame freeze). Exposed it (default 0.5 = byte-identical to 1017, identity
+check net +0). Screen@200k: 1.0 = +6 (looked good, but **all from one opponent**). Confirm@350k:
+**−4** — did not replicate; 0.7=+3 / 0.8=−1 non-monotonic. **Noise. Not shipped.**
+
+### WIN: value weight `VAL_PROD_W` 8 → 16 (env `V6_PROD_W`)
+Compute-neutral, diagnosis-motivated (value a production lead more → the existing search contests
+high-prod planets natively, attacking the midgame bleed without a bolt-on pass). Held-out 2p
+(`confirm_ab`, diverse pool: v2/hellburner/lb958/proto/H1000):
+
+| PROD_W | screen@200k | confirm@350k | combined (240g/opp) | shape |
+|---|---|---|---|---|
+| 10 | +0 | — | — | flat (threshold) |
+| **12** | **+5** | **+6** | **+11** | broad, replicated, 4p-neutral |
+| **16** | **+9** | **+5** | **+14** | broad, replicated, **shipped** |
+
+Trend is monotonic-increasing (12<16) = a real, mechanistic effect, not a lucky point. 4 of 5
+opponents net-positive combined; only H1000 −1 (n.s.). **4p FFA gate (`eval/ffa4.py`, the scored
+format), 500 games over 2 offsets:** baseline 50.2% vs PROD_W=16 49.4% = −4/500 games, **statistically
+neutral (overlapping CIs, no detectable 4p effect).** ⇒ clears the bar: improves the predictive
+signal, no v5-style 4p regression. **This is the first lever since the forward-sim brain to survive
+the held-out test that killed the hammer, self-emit, and the LB1050 refinements.**
+
+### Submitted: ref 53264512 (PROD_W=16) — 2026-06-01 18:29 UTC, PENDING (monitoring)
+- **The ONLY diff from the 1017/997.5 v6 agent is `VAL_PROD_W: 8.0 → 16.0`** (one line, `submission.py:127`).
+  Verified `forward_score` (the only fn PROD_W touches) is byte-identical between `submission.py` and
+  the benchmarked `agents/heuristic_v6.py`, and `_score_projection` is behaviorally identical at default
+  knobs — so the shipped file reproduces exactly what the A/B measured. Smoke-tested: crushed `random`
+  9733-0, seat status DONE, **0 anomalies**; timing inherited from 1017 (compute unchanged by a constant).
+- **Quota:** shared 5/UTC-day. 06-01 UTC had 2 teammate submissions; this is the 3rd → **2 slots left**
+  for the team today. One slot spent, as authorized.
+- **Ladder context (NEW this session):** the team's best is now **1023.5** (teammate's ref 53244971,
+  06-01) and 1016.5 (53244319) — *above* our v6 brain, which **drifted 1017→1007→997.5** (53186031).
+  So PROD_W=16 (v6 base + a few pts) likely lands **below 1023.5** → it will **not** take #1, but
+  best-of-N means it **can't hurt rank**. Its value is the **signal**: does the +14 2p gain transfer
+  to the ladder vs our v6 base (997.5)? If 53264512 converges clearly above 997.5, the value-weight
+  lever transfers and is worth carrying onto the teammate's stronger 1023.5 line.
+
+### Files / state
+- `submission.py`: VAL_PROD_W 8→16 (shipped). **Uncommitted** (per standing rule, commit only when asked).
+- `agents/heuristic_v6.py`: added `FWD_SELF_EMIT` knob (default 0.5 = off) — dev-only, default PROD_W
+  kept at **8** so the registered eval baseline stays the stable 1017 brain (override with `V6_PROD_W`).
+- Eval used: `eval/confirm_ab.py` (2p held-out paired) + `eval/ffa4.py` (4p scored format, env-injected).
+
+---
+
 ## 2026-05-31 — v6 BRAIN WINS THE LADDER: 1017.2 vs v2's 911.7 (same-day, +105). Brain transfers. Starting 2p tactical port.
 
 > ### Ladder state update (later 05-31, for the record)

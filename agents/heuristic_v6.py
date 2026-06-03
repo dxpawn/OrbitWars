@@ -141,6 +141,12 @@ class Hellburner:
                                                 # less self-pessimistic. Structural, untested.
     SEARCH_SOFT_BUDGET: float = 0.85            # s; per-turn deadline (actTimeout is 1.0)
     SEARCH_MAX_ACTIONS: int = 8                 # cap committed actions per turn
+    SEARCH_MAX_ACTIONS_2P: int = 8              # 2p-only commit cap (default 8 = byte-identical off).
+                                                # PORT of exp30 (LB~1072) = HEURISTIC1000 with its
+                                                # SEARCH_MAX_ACTIONS_TO_PICK_2P raised 7->9 (the ONLY
+                                                # diff, +~30-70 LB on the real ladder). Targets v6's
+                                                # diagnosed 2p midgame stall: let it commit MORE
+                                                # captures/turn in 2p. 4p path untouched (n_sides!=2).
     SEARCH_MIN_GAIN: float = 1e-6               # only commit actions with positive score gain
 
     # --- 2p tactical layer (ported from HEURISTIC1000), env-gated, default OFF ---
@@ -203,6 +209,7 @@ class Hellburner:
         self.FWD_SELF_EMIT = _envf("V6_SELF_EMIT", Hellburner.FWD_SELF_EMIT)
         self.SEARCH_MIN_GAIN = _envf("V6_MIN_GAIN", Hellburner.SEARCH_MIN_GAIN)
         self.SEARCH_MAX_ACTIONS = _envi("V6_MAX_ACTIONS", Hellburner.SEARCH_MAX_ACTIONS)
+        self.SEARCH_MAX_ACTIONS_2P = _envi("V6_MAX_ACTIONS_2P", Hellburner.SEARCH_MAX_ACTIONS_2P)
         # 2p tactical knobs (default off => identical to the 1017 ladder agent).
         self.OVERSEND_2P = _envi("V6_OVERSEND_2P", Hellburner.OVERSEND_2P)
         self.PRESS_2P = _envi("V6_PRESS_2P", Hellburner.PRESS_2P)
@@ -1149,7 +1156,8 @@ class Hellburner:
         moves: FleetOrders = []
         baseline = self._score_projection(None)
         use_d2 = bool(self.DEPTH2) and self.n_sides == 2
-        for _ in range(self.SEARCH_MAX_ACTIONS):
+        max_actions = self.SEARCH_MAX_ACTIONS_2P if self.n_sides == 2 else self.SEARCH_MAX_ACTIONS
+        for _ in range(max_actions):
             if time.perf_counter() >= deadline:
                 break
             cands = []  # (gain, target, fleet_orders, intercepts, extra)

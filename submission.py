@@ -124,7 +124,13 @@ class Hellburner:
                                                 # net vs 0.20). 0.10 is the peak; lower turns
                                                 # snipe-blind, higher is over-pessimistic.
     VAL_PLANET_W: float = 5.0                   # value of a planet-count lead (in ships)
-    VAL_PROD_W: float = 8.0                     # value of a production lead (in ships)
+    VAL_PROD_W: float = 16.0                    # value of a production lead (in ships).
+                                                # 8.0 = the 1017 ladder agent; raised to 16.0
+                                                # after held-out 2p A/B (eval.confirm_ab): +9@200k
+                                                # /+5@350k net broad vs the diverse pool, and 4p
+                                                # FFA NEUTRAL (50.2%→49.4% over 500 games, n.s.).
+                                                # 2p h2h is the diary's ladder-predictive signal;
+                                                # 4p showed no regression. ONLY diff from 1017.
     SEARCH_SOFT_BUDGET: float = 0.85            # s; per-turn deadline (actTimeout is 1.0)
     SEARCH_MAX_ACTIONS: int = 8                 # cap committed actions per turn
     SEARCH_MIN_GAIN: float = 1e-6               # only commit actions with positive score gain
