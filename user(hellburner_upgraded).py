@@ -51,6 +51,114 @@ def _envf(name: str, default: float) -> float:
         return default
 
 
+# ============================================================
+# MONTE CARLO TREE SEARCH (MCTS)
+# ============================================================
+
+class MCTSNode:
+    """Node for Monte Carlo Tree Search."""
+    
+    def __init__(self, action=None, parent=None):
+        self.action = action  # Action that led to this node
+        self.parent = parent  # Parent node
+        self.children = []  # Child nodes
+        self.visits = 0  # Number of visits
+        self.value = 0.0  # Total value (win rate)
+        self.untried_actions = []  # Actions not yet tried
+    
+    def is_fully_expanded(self):
+        return len(self.untried_actions) == 0
+    
+    def best_child(self, exploration_weight=1.0):
+        """Select best child using UCB1."""
+        if not self.children:
+            return None
+        
+        # UCB1 formula: value/visits + exploration_weight * sqrt(2 * ln(parent_visits) / visits)
+        best_score = -float('inf')
+        best_child = None
+        
+        for child in self.children:
+            if child.visits == 0:
+                score = float('inf')
+            else:
+                exploitation = child.value / child.visits
+                exploration = exploration_weight * math.sqrt(2 * math.log(self.visits) / child.visits)
+                score = exploitation + exploration
+            
+            if score > best_score:
+                best_score = score
+                best_child = child
+        
+        return best_child
+    
+    def update(self, value):
+        """Update node with new value."""
+        self.visits += 1
+        self.value += value
+
+
+def mcts_search(agent, deadline, max_iterations=100):
+    """Simple MCTS search for best action."""
+    # Generate candidate actions
+    root = MCTSNode()
+    
+    # Collect all possible actions
+    for target in sorted(agent.planets, key=lambda p: (p.production, p.ships), reverse=True):
+        if time.perf_counter() >= deadline:
+            break
+        action = agent._action_for_target(target)
+        if action is None:
+            continue
+        fleet_orders, intercepts = action
+        root.untried_actions.append((target, fleet_orders, intercepts))
+    
+    if not root.untried_actions:
+        return []
+    
+    # Run MCTS iterations
+    for _ in range(max_iterations):
+        if time.perf_counter() >= deadline:
+            break
+        
+        # Selection
+        node = root
+        while not node.is_fully_expanded() and node.children:
+            node = node.best_child()
+        
+        # Expansion
+        if node.untried_actions:
+            target, fleet_orders, intercepts = node.untried_actions.pop()
+            child = MCTSNode(action=(target, fleet_orders, intercepts), parent=node)
+            node.children.append(child)
+            node = child
+        
+        # Simulation (use forward projection)
+        if node.action:
+            target, fleet_orders, intercepts = node.action
+            extra = [
+                (target.id, max(1, int(math.ceil(travel))), agent.player, int(ships))
+                for (_sid, _ang, ships), (_ix, _iy, travel) in zip(fleet_orders, intercepts)
+            ]
+            value = agent._score_projection(extra)
+        else:
+            value = agent._score_projection(None)
+        
+        # Backpropagation
+        while node is not None:
+            node.update(value)
+            node = node.parent
+    
+    # Select best action
+    best_child = root.best_child(exploration_weight=0.0)  # Pure exploitation
+    if best_child and best_child.action:
+        target, fleet_orders, intercepts = best_child.action
+        agent.commit_move_orders((target, 0, fleet_orders, intercepts))
+        return fleet_orders
+    
+    return []
+
+
 def _envi(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, default))
@@ -105,8 +213,8 @@ class EarlyGameState:
 
 class Hellburner:
     SHIP_SPEED_MAX: float = 6.0
-    EARLY_ROUNDS: int = 3
-    EARLY_LOOK_AHEAD: int = 33
+    EARLY_ROUNDS: int = 4
+    EARLY_LOOK_AHEAD: int = 40
     MAX_DISTANCE: int = 38       # 1v1 reach (v2's value; used when n_sides <= 2)
     MAX_DISTANCE_MP: int = 38    # 3p/4p reach. REVERTED 30->38: v5's reach-30 won
                                  # local 4p FFA but REGRESSED the real ladder
@@ -120,10 +228,22 @@ class Hellburner:
     OPENING_TURN_2P: int = 14
     OPENING_TURN_4P: int = 10
     LATE_FLUSH_REMAINING_TURNS: int = 25
+    
+    # NEW: Phase-aware value weights for 2P vs 4P
+    VAL_PLANET_W_2P: float = 6.0
+    VAL_PLANET_W_4P: float = 5.0
+    VAL_PROD_W_2P: float = 10.0
+    VAL_PROD_W_4P: float = 8.0
+    
+    # NEW: Phase-aware early-game parameters for 2P vs 4P - DISABLED (caused regression)
+    EARLY_ROUNDS_2P: int = 5
+    EARLY_ROUNDS_4P: int = 4
+    EARLY_LOOK_AHEAD_2P: int = 45
+    EARLY_LOOK_AHEAD_4P: int = 40
 
     # --- forward-projection brain (v6) ---
     FWD_HORIZON: int = 18                       # turns to project the whole board
-    FWD_SNAPSHOT_TURNS: tuple = (4, 8, 14, 20)  # score is averaged over these horizons (NovaHeuristic_v2)
+    FWD_SNAPSHOT_TURNS: tuple = (3, 6, 10, 15, 20)  # more snapshots for better averaging
     FWD_EMIT_FRAC: float = 0.10                 # phantom-launch surplus fraction; swept +
                                                 # held-out confirmed (3 seed ranges: +7/+11/+8
                                                 # net vs 0.20). 0.10 is the peak; lower turns
@@ -131,8 +251,36 @@ class Hellburner:
     VAL_PLANET_W: float = 5.0                   # value of a planet-count lead (in ships)
     VAL_PROD_W: float = 8.0                     # value of a production lead (in ships)
     SEARCH_SOFT_BUDGET: float = 0.85            # s; per-turn deadline (actTimeout is 1.0)
-    SEARCH_MAX_ACTIONS: int = 13                # cap committed actions per turn (increased from 8)
+    SEARCH_MAX_ACTIONS: int = 12                # cap committed actions per turn (increased from 8)
+    
+    # NEW: Phase-aware search parameters
+    SEARCH_MAX_ACTIONS_OPENING: int = 8          # fewer actions in opening (focus on expansion)
+    SEARCH_MAX_ACTIONS_LATE: int = 15            # more actions in late (aggressive flushing)
     SEARCH_MIN_GAIN: float = 1e-6               # only commit actions with positive score gain
+    
+    # NEW: Target diversity (NovaHeuristic_v2 F16_DIVERSITY_ENABLED) - DISABLED (HIGH VARIANCE 33.75-45.00%)
+    TARGET_DIVERSITY_ENABLED: bool = False
+    TARGET_CLOSEST_PICKS: int = 2               # number of closest targets to pick per source
+    TARGET_PROD_PICKS: int = 1                  # number of high-production targets to pick per source
+    
+    # NEW: Mode detection (NovaHeuristic_v2) - adaptive strategy based on game state - DISABLED (caused regression)
+    PERSONALITY_ENABLED: bool = False
+    PERSONALITY_AGG_HIGH: float = 0.30          # high aggression threshold
+    PERSONALITY_AGG_LOW: float = 0.10           # low aggression threshold
+    PERSONALITY_MIN_SAMPLE: int = 50            # minimum enemy ships to detect personality
+
+    # NEW: Leader bash (councilHeuristic) - aggressive when leading in 4P - DISABLED (NO IMPROVEMENT)
+    LEADER_BASH_ENABLED: bool = False
+    LEADER_BASH_RATIO: float = 1.3              # ratio to detect contest_leader
+    LEADER_BASH_BONUS: float = 4.0              # score penalty for leader targets
+    LEADER_BASH_MIN_STEP: int = 60              # minimum step to enable
+
+    # NEW: Neutral saturation stop expand (councilHeuristic) - stop expansion when neutrals exhausted - DISABLED (REGRESSION)
+    NEUTRAL_SATURATION_STOP_EXPAND_ENABLED: bool = False
+    NEUTRAL_SATURATION_2P_ONLY: bool = True
+    NEUTRAL_SATURATION_TURN_MIN: int = 20
+    NEUTRAL_SATURATION_CHEAP_GARRISON: int = 10
+    NEUTRAL_SATURATION_REACH_DIST: float = 30.0
 
     def __init__(self):
         self._start_time: float = 0.0
@@ -165,6 +313,13 @@ class Hellburner:
         # NEW: Phase detection (NovaHeuristic-style)
         self.is_opening: bool = False
         self.is_late: bool = False
+        # NEW: Mode detection (NovaHeuristic_v2)
+        self.mode: str = "patient"  # patient, opportunistic, pressure
+        # NEW: Leader bash (councilHeuristic)
+        self.leader_id: int = None
+        self.contest_leader: bool = False
+        # NEW: Neutral saturation stop expand (councilHeuristic)
+        self.neutral_saturation_stop_expand: bool = False
 
     def fleet_speed(self, ships: int | float) -> float:
         return min(self.SHIP_SPEED_MAX, 1.0 + (self.SHIP_SPEED_MAX - 1.0) * (math.log(ships) / math.log(1000)) ** 1.5)
@@ -181,6 +336,78 @@ class Hellburner:
                 self.orbital_info[p] = (r, math.atan2(ip[3] - cy, ip[2] - cx))
             else:
                 self.orbital_info[p] = None
+
+    def _detect_leader_and_contest(self):
+        """Detect leader_id and contest_leader status for LEADER_BASH (councilHeuristic)."""
+        if not self.LEADER_BASH_ENABLED or self.n_sides <= 2:
+            self.leader_id = None
+            self.contest_leader = False
+            return
+
+        # Calculate lead_scores for each owner (based on strength and production)
+        owner_strength = {}
+        owner_production = {}
+        for p in self.planets:
+            owner_strength[p.owner] = owner_strength.get(p.owner, 0) + p.ships
+            owner_production[p.owner] = owner_production.get(p.owner, 0) + p.production
+        for f in self.fleets:
+            owner_strength[f.owner] = owner_strength.get(f.owner, 0) + f.ships
+
+        lead_scores = {}
+        for owner in owner_production.keys():
+            if owner == -1:
+                continue
+            lead_scores[owner] = (
+                owner_strength.get(owner, 0) * 0.5
+                + owner_production.get(owner, 0) * 0.5
+            )
+
+        if lead_scores:
+            top_owner = max(lead_scores, key=lambda k: lead_scores[k])
+            self.leader_id = top_owner
+            my_score = lead_scores.get(self.player, 0)
+            top_score = lead_scores.get(top_owner, 0)
+            if (
+                top_owner != self.player
+                and my_score > 0
+                and (top_score / my_score) >= self.LEADER_BASH_RATIO
+            ):
+                self.contest_leader = True
+            else:
+                self.contest_leader = False
+        else:
+            self.leader_id = None
+            self.contest_leader = False
+
+    def _detect_neutral_saturation(self):
+        """Detect if neutrals are exhausted for NEUTRAL_SATURATION_STOP_EXPAND (councilHeuristic)."""
+        if not self.NEUTRAL_SATURATION_STOP_EXPAND_ENABLED:
+            self.neutral_saturation_stop_expand = False
+            return
+
+        if self.scene_step < self.NEUTRAL_SATURATION_TURN_MIN:
+            self.neutral_saturation_stop_expand = False
+            return
+
+        if self.NEUTRAL_SATURATION_2P_ONLY and self.n_sides > 2:
+            self.neutral_saturation_stop_expand = False
+            return
+
+        # Check if there are any cheap neutrals within reach
+        any_cheap = False
+        for n in self.planets:
+            if n.owner != -1:
+                continue
+            if int(n.ships) > self.NEUTRAL_SATURATION_CHEAP_GARRISON:
+                continue
+            for mp in self.owned_planets:
+                if distance((mp.x, mp.y), (n.x, n.y)) <= self.NEUTRAL_SATURATION_REACH_DIST:
+                    any_cheap = True
+                    break
+            if any_cheap:
+                break
+
+        self.neutral_saturation_stop_expand = not any_cheap
 
     def build_proximity_graph(self) -> None:
         """Build directed adjacency list: dst -> [(src, travel_steps)].
@@ -984,23 +1211,20 @@ class Hellburner:
         """Average leader-relative score over the snapshot horizons (stabler
         than a single end-of-horizon read).
         
-        NEW: Weighted snapshot averaging (NovaHeuristic_v2-style) - weight = 1/t
-        so earlier snapshots count more (turn-4 counts 5x more than turn-20)."""
+        v6_1017-style: Simple average (not weighted 1/t)."""
         final, snaps = self.forward_project(
             extra_arrivals=extra_arrivals, snapshot_turns=self.FWD_SNAPSHOT_TURNS)
         total = 0.0
-        weight_sum = 0.0
+        cnt = 0
         for t in self.FWD_SNAPSHOT_TURNS:
             snap = snaps.get(t)
             if snap is not None:
-                weight = 1.0 / t  # Weighted by 1/t
-                total += weight * self.forward_score(snap)
-                weight_sum += weight
+                total += self.forward_score(snap)
+                cnt += 1
         if self.FWD_HORIZON not in self.FWD_SNAPSHOT_TURNS:
-            weight = 1.0 / self.FWD_HORIZON
-            total += weight * self.forward_score(final)
-            weight_sum += weight
-        return total / weight_sum if weight_sum > 0 else self.forward_score(final)
+            total += self.forward_score(final)
+            cnt += 1
+        return total / cnt if cnt else self.forward_score(final)
 
     def _action_for_target(self, target):
         """Concrete fleet orders to capture/defend `target`, or None. Mirrors
@@ -1023,11 +1247,78 @@ class Hellburner:
             return None
         return fleet_orders, intercepts
 
+    def _generate_diverse_targets(self):
+        """Generate a diverse set of targets to evaluate (NovaHeuristic_v2 F16_DIVERSITY_ENABLED).
+        Picks both closest and high-production targets for better action diversity."""
+        if not self.TARGET_DIVERSITY_ENABLED:
+            return sorted(self.planets, key=lambda p: p.ships, reverse=True)
+        
+        # Group targets by distance from our planets
+        targets_by_distance = []
+        for target in self.planets:
+            if target.owner == self.player:
+                continue
+            if not bool(self.inbound_edges.get(target)):
+                continue
+            # Find minimum distance from any of our planets
+            min_dist = float('inf')
+            for src, travel in self.inbound_edges.get(target, []):
+                if src.owner == self.player:
+                    min_dist = min(min_dist, travel)
+            if min_dist < float('inf'):
+                targets_by_distance.append((min_dist, target))
+        
+        # Sort by distance
+        targets_by_distance.sort(key=lambda x: x[0])
+        
+        # Pick closest targets
+        closest_targets = [t for _, t in targets_by_distance[:self.TARGET_CLOSEST_PICKS]]
+        closest_ids = {t.id for t in closest_targets}
+        
+        # Pick high-production targets (not already picked)
+        remaining = [(d, t) for d, t in targets_by_distance if t.id not in closest_ids]
+        remaining.sort(key=lambda x: (-int(x[1].production), x[0]))
+        prod_targets = [t for _, t in remaining[:self.TARGET_PROD_PICKS]]
+        
+        # Combine with remaining targets sorted by ships
+        diverse_targets = closest_targets + prod_targets
+        remaining_ids = {t.id for t in diverse_targets}
+        other_targets = [t for _, t in targets_by_distance if t.id not in remaining_ids]
+        other_targets.sort(key=lambda p: p.ships, reverse=True)
+        
+        return diverse_targets + other_targets
+
+    def _detect_mode(self):
+        """Detect game mode based on enemy aggression (NovaHeuristic_v2).
+        Returns 'patient', 'opportunistic', or 'pressure'."""
+        if not self.PERSONALITY_ENABLED:
+            return "patient"
+        
+        if self.is_opening:
+            return "patient"
+        
+        # Calculate enemy aggression (fleet ships / total enemy ships)
+        enemy_planet_ships = sum(int(p.ships) for p in self.planets if p.owner not in (-1, self.player))
+        enemy_fleet_ships = sum(int(f.ships) for f in self.fleets if f.owner != self.player and f.owner != -1)
+        enemy_total = enemy_planet_ships + enemy_fleet_ships
+        
+        if enemy_total < self.PERSONALITY_MIN_SAMPLE:
+            return "patient"
+        
+        aggression = enemy_fleet_ships / float(enemy_total)
+        if aggression >= self.PERSONALITY_AGG_HIGH:
+            return "pressure"
+        elif aggression <= self.PERSONALITY_AGG_LOW:
+            return "opportunistic"
+        else:
+            return "patient"
+
     def plan_midgame(self, deadline):
         """1-ply search: repeatedly commit the capture/defense with the best
         leader-relative projected score gain, until none helps or time is up."""
         moves: FleetOrders = []
         baseline = self._score_projection(None)
+
         for _ in range(self.SEARCH_MAX_ACTIONS):
             if time.perf_counter() >= deadline:
                 break
@@ -1092,6 +1383,23 @@ class Hellburner:
         self.is_opening = self.scene_step < opening_turn
         remaining_steps = max(1, 400 - self.scene_step)  # TOTAL_STEPS = 400
         self.is_late = remaining_steps < self.LATE_FLUSH_REMAINING_TURNS
+
+        # NEW: Detect leader and contest_leader for LEADER_BASH
+        self._detect_leader_and_contest()
+
+        # NEW: Detect neutral saturation for NEUTRAL_SATURATION_STOP_EXPAND
+        self._detect_neutral_saturation()
+        
+        # NEW: Phase-aware value weights for 2P vs 4P - DISABLED (caused regression)
+        # self.VAL_PLANET_W = self.VAL_PLANET_W_2P if self.n_sides <= 2 else self.VAL_PLANET_W_4P
+        # self.VAL_PROD_W = self.VAL_PROD_W_2P if self.n_sides <= 2 else self.VAL_PROD_W_4P
+        
+        # NEW: Phase-aware early-game parameters for 2P vs 4P - DISABLED (caused regression)
+        # self.EARLY_ROUNDS = self.EARLY_ROUNDS_2P if self.n_sides <= 2 else self.EARLY_ROUNDS_4P
+        # self.EARLY_LOOK_AHEAD = self.EARLY_LOOK_AHEAD_2P if self.n_sides <= 2 else self.EARLY_LOOK_AHEAD_4P
+        
+        # NEW: Update mode detection (NovaHeuristic_v2) - DISABLED
+        # self.mode = self._detect_mode()
 
         self.build_orbital_info(obs.get('initial_planets', []))
         self.build_proximity_graph()

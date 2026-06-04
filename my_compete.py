@@ -16,11 +16,7 @@ nova_module = importlib.util.module_from_spec(spec_nova)
 spec_nova.loader.exec_module(nova_module)
 nova_agent = nova_module.agent
 
-# Import Evogen
-spec_evo = importlib.util.spec_from_file_location("evogen", "adversaries/evogen.py")
-evo_module = importlib.util.module_from_spec(spec_evo)
-spec_evo.loader.exec_module(evo_module)
-evo_agent = evo_module.agent
+# Import Evogen - REMOVED
 
 # Import Hellburner
 spec_hell = importlib.util.spec_from_file_location("hellburner", "adversaries/hellburner.py")
@@ -28,11 +24,23 @@ hell_module = importlib.util.module_from_spec(spec_hell)
 spec_hell.loader.exec_module(hell_module)
 hell_agent = hell_module.agent
 
-# Import User (upgraded)
-spec_user = importlib.util.spec_from_file_location("user_upgraded", "user(hellburner_upgraded).py")
+# Import User (submission.py with attention mechanism)
+spec_user = importlib.util.spec_from_file_location("user_submission", "submission.py")
 user_module = importlib.util.module_from_spec(spec_user)
 spec_user.loader.exec_module(user_module)
 user_agent = user_module.agent
+
+# Import heuristic_v6_1017
+spec_v6 = importlib.util.spec_from_file_location("v6_1017", "heuristic_v6_1017.py")
+v6_module = importlib.util.module_from_spec(spec_v6)
+spec_v6.loader.exec_module(v6_module)
+v6_agent = v6_module.agent
+
+# Import Friend's model (1140LB)
+spec_friend = importlib.util.spec_from_file_location("friend", "main_friend.py")
+friend_module = importlib.util.module_from_spec(spec_friend)
+spec_friend.loader.exec_module(friend_module)
+friend_agent = friend_module.agent
 
 # Import heuristic1025
 spec_heur = importlib.util.spec_from_file_location("heuristic1025", "heuristic1025.py")
@@ -76,9 +84,9 @@ def run_ffa(agent_list):
 
 bots = {
     "Model 0 (NovaHeur)": nova_agent,
-    "Model 1 (Evogen)": evo_agent,
-    "Model 2 (User)": user_agent,
-    "Model 3 (Heuristic1025)": heur_agent
+    "Model 1 (User)": user_agent,
+    "Model 2 (v6_1017)": v6_agent,
+    "Model 3 (Friend 1140LB)": friend_agent
 }
 
 # ============================================================
@@ -103,7 +111,7 @@ for name1, name2 in matchups:
 
     print(f"Đang đấu: {name1} vs {name2}...")
 
-    for i in range(20):
+    for i in range(1):
 
         r1, r2 = run_match(
             bots[name1],
@@ -131,9 +139,9 @@ bot_names = list(bots.keys())
 bot_files = list(bots.values())
 
 # Run FFA with all 4 models
-for game in range(20):  # 20 games for FFA
+for game in range(2):  # 2 games for FFA
 
-    print(f"  Game {game+1}/20")
+    print(f"  Game {game+1}/2")
 
     rewards = run_ffa(bot_files)
 
