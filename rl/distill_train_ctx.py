@@ -19,13 +19,20 @@ def _build_ctx(X, gid):
     uniq, inv = np.unique(gid, return_inverse=True)
     G = len(uniq)
     sums = np.zeros((G, 46), np.float64)
+    sq = np.zeros((G, 46), np.float64)
     cnt = np.zeros(G, np.float64)
     np.add.at(sums, inv, X)
+    np.add.at(sq, inv, X.astype(np.float64) ** 2)
     np.add.at(cnt, inv, 1.0)
     means = (sums / cnt[:, None]).astype(np.float32)
+    var = (sq / cnt[:, None]) - (sums / cnt[:, None]) ** 2
+    stds = np.sqrt(np.maximum(var, 0.0)).astype(np.float32)
     maxs = np.full((G, 46), -1e30, np.float32)
     np.maximum.at(maxs, inv, X)
-    Xc = np.concatenate([X, means[inv], maxs[inv]], axis=1)
+    mins = np.full((G, 46), 1e30, np.float32)
+    np.minimum.at(mins, inv, X)
+    # per-candidate: own 46 + set mean/max/min/std (46 each) = 230
+    Xc = np.concatenate([X, means[inv], maxs[inv], mins[inv], stds[inv]], axis=1)
     return Xc, inv, G
 
 
@@ -54,7 +61,8 @@ def _train_one(X, y, gid, hidden, epochs, lr, batch, tag, out_dir):
     is_tr = np.array([g in tr_groups for g in inv])
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     Xt = torch.tensor(Xn, dtype=torch.float32); yt = torch.tensor(y, dtype=torch.float32).view(-1, 1)
-    model = nn.Sequential(nn.Linear(138, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU(), nn.Linear(hidden, 1)).to(dev)
+    D = Xc.shape[1]
+    model = nn.Sequential(nn.Linear(D, hidden), nn.ReLU(), nn.Linear(hidden, hidden), nn.ReLU(), nn.Linear(hidden, 1)).to(dev)
     opt = torch.optim.Adam(model.parameters(), lr=lr); lossf = nn.MSELoss()
     tr_idx = np.where(is_tr)[0]; va_idx = np.where(~is_tr)[0]
     Xtr = Xt[tr_idx].to(dev); ytr = yt[tr_idx].to(dev)
@@ -109,15 +117,21 @@ def score_many(rows):
     if k == 0:
         return []
     n = 46
-    mean = [0.0]*n; mx = [-1e30]*n
+    mean = [0.0]*n; mx = [-1e30]*n; mn = [1e30]*n; sq = [0.0]*n
     for r in rows:
         for j in range(n):
-            mean[j] += r[j]
-            if r[j] > mx[j]: mx[j] = r[j]
-    for j in range(n): mean[j] /= k
+            v = r[j]
+            mean[j] += v; sq[j] += v*v
+            if v > mx[j]: mx[j] = v
+            if v < mn[j]: mn[j] = v
+    sd = [0.0]*n
+    for j in range(n):
+        mean[j] /= k
+        var = sq[j]/k - mean[j]*mean[j]
+        sd[j] = var**0.5 if var > 0.0 else 0.0
     out = []
     for r in rows:
-        x = r + mean + mx  # 138
+        x = r + mean + mx + mn + sd  # 230
         z = [(x[i]-MEAN[i])/STD[i] for i in range(len(x))]
         for li in range(_NL):
             W = globals()['W%d'%li]; B = globals()['B%d'%li]

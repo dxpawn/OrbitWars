@@ -4,6 +4,43 @@ Reverse-chronological log of decisions, setup, training runs, and results. Newes
 
 ---
 
+## 2026-06-03 — STAGE 2 EDGE A: context student = 1155.9, TOP OF CLASS. Fidelity loop VALIDATED.
+
+**We lead the class cluster.** Class is graded relative among "IAI-RL-*" teams (we compete UNDERCOVER as
+team "FurryToonMix"; will rename near deadline). The friend (sabotage team) = **IAI-RL-Checkm8 ~1129**.
+Standings now: us **1155.9** > class leader IAI-RL-em-anh-Hai-Bang 1150.1 > others. **The whole class top
+is the SAME friend-base** (everyone distilled/copied his LB-1140 transformer) — a noise cluster ~1130-1156.
+
+### The breakthrough: a VALIDATED, FAST optimization loop
+- **Pointwise distilled (53292001): 1142.1.** **Context-aware student (53313228): 1155.9 (+14).**
+- The ONLY change: add per-call **set mean+max pooling** to each candidate's 46 feats (DeepSet-style) so a
+  fast MLP captures his transformer's cross-candidate attention. **Offline held-out top-1: 76% → 80%/83%
+  (2p/4p); R² 0.86 → 0.91.** And it **TRANSFERRED**: +14 ladder.
+- ⇒ **`offline top-1 fidelity` PREDICTS ladder gains** — the first reliable, fast, slot-free signal in the
+  whole project (everything prior was anti-predictive). We can now iterate fidelity offline (no slow games,
+  no slots) and ladder-confirm only winners. **This is the lever.**
+- **Our structural edge = SPEED.** ours max 0.12s/turn vs his 1.7s (he times out 21/140 turns locally).
+  We're his policy WITHOUT the timeout tax → we beat the slow copies the class runs. A *truer* fast copy
+  climbs the cluster.
+
+### Ceiling (honest) + plan
+- Copy ceiling: we only have HIS lossy transformer as teacher (he capped at ~1140 imitating the 1500+ top
+  players; we can't out-imitate without their data). Fidelity loop has maybe ~10-15 pts left (→ ~1165-1170)
+  to SECURE the lead; decisive separation needs skill beyond the friend.
+- **Edge A continued (in progress):** richer pooling (min/std, 230 feats) → push top-1 higher → submit.
+- **Edge B (moonshot, not started):** bolt v6 forward-projection onto his picker to veto sniped-back
+  captures (lookahead the cluster lacks). Multi-day, uncertain, highest ceiling.
+
+### New files (Stage 2)
+- `rl/distill_collect_grouped.py` (per-call grouped data: 25k/37k candidate-sets 2p/4p),
+  `rl/distill_train_ctx.py` (context student + held-out top-1 + pure-Python export that recomputes set
+  context from `rows`), `rl/selfplay.py` (agent factory: swap re-ranker weights into the hull in-process;
+  self-play A/B — validated: distilled beats v6 71.9% vs 37.5% equal-baseline).
+- Submitted bundles: `submission_distilled.py` (pointwise, 53292001) + `submission_distilled_ctx.py`
+  (context, 53313228). Both = his hull+features + OUR student; his transformer never ships.
+
+---
+
 ## 2026-06-02 (cont. 2) — DISTILLATION PIPELINE BUILT + TRAINED + INTEGRATED + SUBMITTED (53292001).
 
 > **✅ RESULT: 53292001 jumped 878 → 885 → 1110.6 (still converging) — DISTILLATION TRANSFERRED.**
