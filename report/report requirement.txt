@@ -1,0 +1,13 @@
+Các nhóm nộp bài tập theo định dạng pdf (ieee conference 2 columns) trong đó ghi rõ:
+
+1. Số thứ tự nhóm theo danh sách và danh sách thành viên và thành viên đại diện nộp bài.
+
+2. Công việc và đóng góp các thành viên
+
+3. Link đến github chứa phần cài đặt của nhóm
+
+4. Kết quả và ranking trên leader board
+
+5. Cách tiếp cận, giải quyết bài toán và các kết quả đạt được.
+
+Hạn nộp bài: Thứ 3, 09/06

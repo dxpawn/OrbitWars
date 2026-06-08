@@ -100,9 +100,9 @@ def _reindex(inv, mask):
 def _export(path, W, mean, std, tag, r2, t1):
     def arr(a): return repr(a.tolist())
     L = [
-        f'"""OUR context-aware distilled re-ranker ({tag}) - pure-Python score_many drop-in.',
-        f"Per-candidate 46 feats + set mean(46) + set max(46) = 138 -> MLP. Distilled from his scorer.",
-        f"val_R2={r2:.4f} heldout_top1={t1:.3f}. Model ours; features reused.",
+        f'"""ctx2 context-aware re-ranker ({tag}) - pure-Python score_many drop-in.',
+        f"Per-candidate 46 features + set mean/max/min/std (46 each) = 230 -> MLP 230-128-128-1.",
+        f"val_R2={r2:.4f} heldout_top1={t1:.3f}.",
         '"""',
         "import math",
         f"MEAN = {arr(mean)}", f"STD = {arr(std)}",

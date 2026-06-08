@@ -9,3 +9,7 @@ eval/*.err
 
 # Regeneratable submission artifacts (Kaggle rejects tarballs anyway)
 submission.tar.gz
+*.aux
+other_adversaries/SimplifiedOWAgentLB1234.py
+/other_adversaries/carbon_orbitwarsv2_lb1221
+agents/SimplifiedOWAgentLB1234.py

@@ -1,0 +1,499 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{fontspec}
+\setmainfont{Times New Roman}
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{Learning versus Planning for Orbit Wars:\\
+ctx2, a Hybrid Learned Re-Ranker, and NeRL, a Model-Predictive Planner}
+
+\author{
+\IEEEauthorblockN{
+Vũ Nguyên Đan,
+Phạm Tiến Dũng,
+Lê Hồng Anh
+}
+
+\IEEEauthorblockA{
+Group 12 --- Team \texttt{IAI-RL-DirtyDozen} \\
+Student IDs: 23020351, 23020345, 23020327 \\
+Submitting representative: Vũ Nguyên Đan (23020351) \\
+Course: Reinforcement Learning and Planning \\
+University of Engineering and Technology -- Vietnam National University, Hanoi (UET--VNU) \\
+Hanoi, Vietnam \\
+}
+}
+
+\maketitle
+
+\begin{abstract}
+This report studies two contrasting agent designs for the real-time strategy game \textit{Orbit Wars}, both developed by our team. The first, \textit{ctx2}, is a \textbf{hybrid} agent: a rule-based engine handles all physics and mechanics (candidate generation, fleet sizing, orbital lead-aiming, sun avoidance, combat resolution, defensive reinforcement), while the single highest-leverage strategic decision---\textit{which planet to attack and from where}---is delegated to a compact neural network acting as a \textit{re-ranker}. The network sees 230 features per candidate (46 base features plus DeepSet-style set statistics), uses an MLP $230 \rightarrow 128 \rightarrow 128 \rightarrow 1$, is trained by supervised regression on roughly 510\,000 labelled candidates, and is exported to pure Python to run inside the one-second-per-turn budget. On a held-out split it matches the top-ranked label about 81--85\% of the time; its public score is about 1025 (current entry 1024.7; it converged near 1067 earlier).
+
+The second agent, \textbf{NeRL} (a backronym for \emph{Not even RL}), is a \textbf{model-predictive planner}. It carries \emph{no} learned parameters: it builds a tensorised forward model of the game, projects each planet's future ownership and garrison over a horizon, and selects launches by their \emph{marginal effect} on that projected state (a competitive ship-flow objective), followed by greedy multi-wave selection, capture-floor ship economy, coordinated multi-source strikes (\textit{focus-fire}), and defensive regrouping. In head-to-head play this planner eliminates both \textit{ctx2} and our strongest heuristic outright; as our active leaderboard submission it currently rates \textbf{1154.6} (TrueSkill, still settling), above the re-ranker. We discuss why an exact-model planner overcomes the imitation ceiling and distribution shift that fundamentally limit the supervised re-ranker, and what this implies for combining learning with planning.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Orbit Wars, model-predictive planning, receding horizon, supervised learning, re-ranker, DeepSet, game AI, self-play
+\end{IEEEkeywords}
+
+\section{Team, contributions, and repository}
+\label{sec:team}
+
+\subsection{Group and members}
+This work is submitted by \textbf{Group 12} on the class list, competing under the team name \texttt{IAI-RL-DirtyDozen}. The members and student IDs are:
+\begin{itemize}
+\item Vũ Nguyên Đan (23020351) --- \emph{submitting representative}
+\item Phạm Tiến Dũng (23020345)
+\item Lê Hồng Anh (23020327)
+\end{itemize}
+
+\subsection{Work division and contributions}
+During the first week (25/05--31/05) each member worked on a separate branch and independently explored a different direction. From 01/06 to 09/06 the team consolidated onto the strongest line: we took as the base the work of whichever member held the highest leaderboard score and developed from there, adjusting flexibly as scores changed. The resulting roles and contributions are summarised in Table~\ref{tab:contrib}.
+
+\begin{table}[htbp]
+\caption{Member roles and contributions}
+\label{tab:contrib}
+\centering
+\small
+\begin{tabular}{lp{4.4cm}c}
+\toprule
+\textbf{Member} & \textbf{Role and contribution} & \textbf{Share} \\
+\midrule
+Vũ Nguyên Đan & Team lead; \textit{ctx2} agent; report writing & 40\% \\
+Phạm Tiến Dũng & \textit{NeRL} agent; report writing & 40\% \\
+Lê Hồng Anh & Active in the first week; not active in the final week & 20\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Repository}
+All code---both agents, the training pipeline, the evaluation harness, and the source of this report---is available at:
+\begin{center}
+\texttt{https://github.com/dxpawn/OrbitWars}
+\end{center}
+
+\subsection{Leaderboard standing (summary)}
+At the time of writing, \texttt{IAI-RL-DirtyDozen} sits at public score \textbf{1154.6}, global rank \textbf{575 / 4016} teams, and \textbf{11th of the 17} \texttt{IAI-RL-*} class teams. The full class breakdown is given in Sec.~\ref{sec:lbstanding}, Table~\ref{tab:lb}.
+
+\section{Introduction}
+
+Orbit Wars is a two-dimensional real-time strategy problem: planets orbit a central sun, each produces resources and garrisons ships, and players launch fleets to capture planets. Every turn an agent must decide how many ships to send, from which planet, to which target, balancing expansion, defence, and offence. The action space is large and the orbital dynamics are non-trivial, so exhaustive global search within the competition's per-turn time budget is infeasible.
+
+We approached the problem from two different directions, and this report presents both as a single comparative study.
+
+\textbf{Approach A --- learning where it matters (\textit{ctx2}).} We separate \emph{mechanics} from \emph{judgement}. Everything that can be written down and tested as a rule---fleet sizing, orbital aiming, sun avoidance, combat, reinforcement---is handled by a rule engine. Only the high-value judgement call, ``which of many feasible targets is worth attacking,'' is learned from self-collected data. This reflects a familiar principle: do not use machine learning where a reliable rule already exists; concentrate model capacity on the highest-value bottleneck.
+
+\textbf{Approach B --- planning with an exact model.} Rather than \emph{learning} a target preference, the planner \emph{computes} one. Because the game's transition rules are known, we simulate the near future exactly and choose the launches that move the projected outcome most in our favour. This is model-based planning in the receding-horizon / model-predictive-control sense~\cite{mpc1989, suttonbarto}: the model is \emph{given}, not learned.
+
+\textbf{Contributions.}
+\begin{enumerate}
+\item A hybrid engine-plus-re-ranker agent (\textit{ctx2}) with a DeepSet-style permutation-invariant set encoding, trained by offline supervised learning and exported to dependency-free Python (Sec.~\ref{sec:ctx2}).
+\item A tensorised model-predictive planner that projects garrison ownership forward and scores launches by a marginal competitive ship-flow objective, with capture-floor ship economy, focus-fire, and regrouping (Sec.~\ref{sec:planner}).
+\item An honest empirical comparison of the two paradigms, including the imitation ceiling, distribution shift, and the unreliability of local self-play as a ranking signal (Sec.~\ref{sec:discussion}).
+\end{enumerate}
+
+\section{Problem and game mechanics}
+
+The playing field is $100 \times 100$ with a sun of radius $R_{\mathrm{sun}} = 10$ at the centre. Planets may be static or move on orbits; the maximum fleet speed is 6 units per turn and a match lasts up to 500 turns. Each turn the agent receives an \textit{observation} describing every planet (owner, ship count, production, position), all in-flight fleets, and incoming threats. Fleet speed depends on fleet size; a fleet aimed at a moving planet must lead its target; and fleets are destroyed if their path crosses the sun. Capturing a planet requires arriving with more ships than the defender holds at the moment of arrival, after which production accrues to the new owner.
+
+These mechanics are fully known and deterministic given the players' actions. That single fact is what makes Approach B possible: a known transition function can be \emph{simulated} rather than \emph{learned}.
+
+% =====================================================================
+\section{Approach A: hybrid engine and learned re-ranker (ctx2)}
+\label{sec:ctx2}
+
+\subsection{Scope of the learned component}
+
+\textit{ctx2} does \textbf{not} learn an end-to-end policy. The network participates only at the \textit{re-ranking} step: after the engine enumerates feasible attack candidates for each owned source planet, the network assigns a quality score and adjusts the priority order. Everything else---computing the fleet size needed to win and hold, leading a moving target, avoiding the sun's shadow, counter-snipe handling, reinforcing threatened planets---is done by the rule engine in \texttt{engine/orbit\_base.py}.
+
+\subsection{Per-turn decision pipeline}
+
+The pipeline has six steps:
+\begin{enumerate}
+\item \textbf{Parse observation.} Decode the state into planets (owner, ships, production, orbital position), in-flight fleets, per-side totals, and incoming threats.
+\item \textbf{Candidate generation.} For each owned planet, the engine lists targets capturable within movement range, pre-sorted by a weighted-distance heuristic. Each candidate's position in the merged list is recorded as the index \texttt{idx}. An expansion factor \texttt{expand}~$=10$ admits extra candidates before truncating to the top-$K$.
+\item \textbf{Featurisation.} Each (source, target) pair is encoded as a 46-dimensional vector (Sec.~\ref{sec:features}).
+\item \textbf{Neural scoring.} \texttt{score\_many(rows)} receives all candidates of a call, appends set statistics (mean, max, min, std per dimension), normalises, and runs the MLP forward pass.
+\item \textbf{Re-ranking.} The final priority is
+\begin{equation}
+\label{eq:priority}
+\mathrm{priority} = \mathrm{idx} - \mathrm{bonus} \cdot \sigma(\mathrm{score}),
+\end{equation}
+with $\sigma$ the sigmoid and $\mathrm{bonus} = 1.45$ (2p) or $1.25$ (4p). A high learned score pulls a candidate above its heuristic order; \texttt{bonus} caps the network's maximum influence. In 4p a tiny jitter ($10^{-6}$) breaks near-ties.
+\item \textbf{Execution.} The engine sends fleets to the chosen targets: it computes the ships required to win and hold, leads the moving target, avoids the sun, and runs a defensive reinforcement pass.
+\end{enumerate}
+Typical network inference is about \textbf{0.1\,s/turn}, comfortably inside the one-second budget.
+
+\subsection{The rule engine}
+
+The engine in \texttt{orbit\_base.py} carries most of the rule-based combat intelligence:
+\begin{itemize}
+\item \textbf{Fleet sizing and navigation:} speed as a function of fleet size, predicting the target's position at arrival (lead aiming), sun-collision checks.
+\item \textbf{Initial target heuristic:} weighted distance, a preference for static planets, an expansion bonus, and race-condition handling when several sides target the same planet.
+\item \textbf{Short-horizon forward projection (4p):} a 7-turn look-ahead that adjusts candidate ranking for longer-than-one-step value.
+\item \textbf{Active defence:} snipe / counter-snipe detection, reinforcing weak planets, late recapture in 2p.
+\item \textbf{Multi-action orchestration:} a per-turn action cap (7 in 2p, 5 in 4p) and source-expansion search.
+\end{itemize}
+Separating engine from network aids debugging: mechanics and candidate generation can be tested independently, enabling the re-ranker only when evaluating the learned part.
+
+\subsection{Network architecture}
+\label{sec:network}
+
+The re-ranker is a three-layer MLP with ReLU activations, trained by supervised regression to predict a target-quality score from the feature vector. After training, the weights are exported to pure Python---no PyTorch/TensorFlow dependency at competition time.
+
+\paragraph{230-dimensional input and DeepSet encoding}
+Each candidate $i$ within a decision has a base vector $\mathbf{x}_i \in \mathbb{R}^{46}$. Before the MLP, we append set statistics over all candidates $S$ of that decision:
+\begin{align}
+\boldsymbol{\mu} &= \mathrm{mean}_{j \in S}(\mathbf{x}_j), &
+\mathbf{m} &= \max_{j \in S}(\mathbf{x}_j), \\
+\mathbf{n} &= \min_{j \in S}(\mathbf{x}_j), &
+\boldsymbol{\sigma} &= \mathrm{std}_{j \in S}(\mathbf{x}_j),
+\end{align}
+(all per-dimension). The full input is $\mathbf{z}_i = [\mathbf{x}_i;\, \boldsymbol{\mu};\, \mathbf{m};\, \mathbf{n};\, \boldsymbol{\sigma}] \in \mathbb{R}^{230}$.
+
+This is a \textbf{DeepSet-style set-pooling}~\cite{deepsets2017}: the network judges a candidate \textit{relative} to the other options in the same decision, rather than in isolation, while remaining cheap pointwise inference. The model is \textbf{permutation-invariant} over candidate order and handles a variable number of candidates per turn.
+
+\paragraph{Forward pass}
+After normalisation $\hat{\mathbf{z}} = (\mathbf{z} - \boldsymbol{\mu}_{\mathrm{train}}) / \boldsymbol{\sigma}_{\mathrm{train}}$ (the \texttt{MEAN}, \texttt{STD} constants are stored in the weight file):
+\begin{equation}
+h_1 = \mathrm{ReLU}(W_0 \hat{\mathbf{z}} + b_0),\;
+h_2 = \mathrm{ReLU}(W_1 h_1 + b_1),\;
+s = W_2 h_2 + b_2.
+\end{equation}
+The architecture is $230 \xrightarrow{\mathrm{ReLU}} 128 \xrightarrow{\mathrm{ReLU}} 128 \xrightarrow{\mathrm{linear}} 1$. The scalar $s$, after a sigmoid, enters Eq.~\eqref{eq:priority}. Two separate weight sets (\texttt{student\_weights\_2p.py}, \texttt{student\_weights\_4p.py}) are kept because the state distribution and re-rank hyper-parameters differ between 2p and 4p.
+
+\subsection{The 46 base features}
+\label{sec:features}
+
+Features are extracted in \texttt{engine/main.py}, combining global state (shared by all candidates in a turn) with local (source, target) information. Most values are clamped to $[0,1]$ or $[-1,1]$; ship counts pass through a saturating map $x/(x+40)$ to reduce sensitivity to absolute scale. Table~\ref{tab:features} lists all 46 dimensions in vector order.
+
+\begin{table*}[htbp]
+\caption{The 46 base features (order as in \texttt{\_candidate\_features})}
+\label{tab:features}
+\centering
+\small
+\begin{tabular}{clp{8.5cm}}
+\toprule
+\textbf{\#} & \textbf{Name} & \textbf{Short description} \\
+\midrule
+\multicolumn{3}{l}{\textit{Global / macro state (indices 0--11)}} \\
+0 & game\_progress & Current turn / 500 \\
+1 & players\_alive & Number of active players / 4 \\
+2 & my\_planet\_share & Fraction of planets we own \\
+3 & my\_gdp\_share & Fraction of total production we own \\
+4 & my\_ship\_share & Fraction of all ships (planet + transit) we own \\
+5 & momentum & Change in our ship share vs.\ 5 turns ago \\
+6 & my\_fleet\_ratio & Ships in transit / our total ships \\
+7 & leader\_gap & Normalised force gap to the leading side \\
+8 & am\_i\_targeted & Fraction of enemy fleets aimed at our planets \\
+9 & fastest\_grower\_gap & Momentum gap between the fastest-growing rival and us \\
+10 & aggression\_trend & Trend of being targeted (5 turns) \\
+11 & enemy\_rhythm & Variability of enemy attack tempo (10 turns) \\
+\midrule
+\multicolumn{3}{l}{\textit{Source planet and diplomacy (12--19)}} \\
+12 & src\_ships & Source ship count (saturating) \\
+13 & src\_production & Source production / 5 \\
+14 & src\_safety & Source safety against incoming threats \\
+15 & diplomacy & $+1$ our defence, $0$ neutral, $-1$ attacking a rival \\
+16 & target\_production & Target production / 5 \\
+17 & is\_dynamic\_target & 1 if comet or non-static planet \\
+18 & owner\_power & Target owner's ship share of the board \\
+19 & is\_weakest\_enemy & 1 if target belongs to the weakest rival \\
+\midrule
+\multicolumn{3}{l}{\textit{Capture and threat simulation (20--31)}} \\
+20 & proj\_owner & Projected owner at arrival: us / neutral / enemy \\
+21 & proj\_ships & Projected defender ships at arrival (saturating) \\
+22 & threat\_after & Enemy threat arriving \textit{after} we capture \\
+23 & support\_after & Our support arriving after we capture \\
+24 & pre\_volatility & Force volatility before we arrive \\
+25 & threat\_potential & Attack potential from other enemy planets \\
+26 & support\_potential & Support potential from our other planets \\
+27 & eta & Time to arrival / 25 \\
+28 & send\_fraction & Ships sent / our total ships \\
+29 & need\_ratio & Ships needed to win / source ships \\
+30 & margin & Safety margin (send $-$ need), normalised \\
+31 & can\_win & 1 if we send enough ships to capture \\
+\midrule
+\multicolumn{3}{l}{\textit{Strategy and terrain (32--45)}} \\
+32 & garrison\_strength & Remaining force after capture (saturating) \\
+33 & defense\_sustainability & Ability to hold after capture \\
+34 & target\_roi & Target production / (ships needed $+ 1$) \\
+35 & front\_diff & Distance-to-nearest-enemy gap (source vs.\ target) \\
+36 & avg\_enemy\_distance & Mean distance to the enemy centroid \\
+37 & angular\_spread & How much enemies surround us angularly \\
+38 & orbital\_trend & ETA trend due to orbital motion \\
+39 & convergence\_threat & Convergence threat (enemies closing distance) \\
+40 & approach\_rate & Rate enemies approach our centroid \\
+41 & enemy\_commitment & Enemy fraction of ships in transit \\
+42 & weakest\_colony & Our weakest planet (after subtracting incoming threats) \\
+43 & local\_superiority & Local support-vs-threat advantage \\
+44 & economic\_impact & Target production / our production \\
+45 & enemy\_exposed & How exposed the enemy side is \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+A short-horizon history layer (\texttt{\_FeatureHistory}) keeps a 5--10 turn buffer to compute \textit{momentum}, \textit{aggression\_trend}, \textit{enemy\_rhythm}, \textit{approach\_rate}, and \textit{convergence\_threat}---trend features that let the network sense game phase and opponent pressure rather than a single snapshot. The re-rank hyper-parameters live in \texttt{engine/feature46\_manifest.json}: \texttt{bonus\_2p=1.45}, \texttt{bonus\_4p=1.25}, \texttt{expand=10}.
+
+\subsection{Training method}
+\label{sec:training}
+
+The model is trained by \textbf{offline supervised learning}: collect (features $\rightarrow$ quality-score) pairs, then regress. There is no environment reward and no exploration---only MSE regression onto fixed labels.
+
+\textbf{Quality labels.} For each decision, an internal scoring pipeline ranks every candidate from its 46 features and set context. This score expresses the strategic priority assigned by the reference scorer and serves as the regression target for the lighter MLP.
+
+\textbf{Data collection.}
+\begin{itemize}
+\item Run the agent over $\approx$\textbf{250 games} (2p and 4p) against a diverse pool (\texttt{heuristic\_v6}, \texttt{adv\_hellburner}, \texttt{adv\_proto\_v15}, \texttt{adv\_lb958}).
+\item Each \texttt{score\_many} call is tagged with a \textit{group id}; all candidates of a call share a group, so set context can be recomputed at training time.
+\item Size: $\approx$25\,000 decision groups (2p), $\approx$37\,000 (4p); $\approx$\textbf{510\,000} labelled candidates total.
+\end{itemize}
+
+\textbf{Training.}
+\begin{itemize}
+\item Concatenate the 46 features with the group's mean/max/min/std $\Rightarrow$ 230 dims; normalise by global mean/std.
+\item Split 90/10 \textit{by group} (not by row) to avoid leakage between train and validation.
+\item MSE loss between predicted and target score; Adam on GPU; about \textbf{1 minute} of training.
+\item Primary metric: \textit{held-out group top-1 agreement}---within each validation group, does the model's top candidate match the label?
+\end{itemize}
+
+\textbf{Export.} Weights, \texttt{MEAN}, \texttt{STD} are written to \texttt{model/student\_weights\_\{2p,4p\}.py}; \texttt{score\_many} reproduces the set-pooling and forward pass exactly as in training.
+
+% =====================================================================
+\section{Approach B: NeRL, a model-predictive planner}
+\label{sec:planner}
+
+\textbf{NeRL}---a backronym for \emph{Not even RL}, since it uses no learning at all---shares the game with \textit{ctx2} but inverts the philosophy: instead of \emph{learning} which target to prefer, it \emph{simulates} the consequences of every candidate launch and picks the one that most improves the projected outcome. The name is deliberately self-aware: NeRL sits on the \emph{planning} side of the course (model-based planning with a known model) rather than the learning side. It contains \textbf{no neural network and no learned weights}; \texttt{torch} is used purely as a fast vectorised-math library so the whole simulation fits in the time budget.
+
+\subsection{What the agent is, in RL terms}
+
+Because the transition rules are known exactly, the planner is \textbf{model-based planning with a given model}~\cite{suttonbarto}---a receding-horizon / model-predictive controller~\cite{mpc1989}. It is \emph{not} a reactive heuristic (it does not score the present state; it simulates the future), and it is \emph{not} learned. The only heuristic elements are pragmatic approximations that keep planning tractable: candidate shortlisting, greedy (rather than optimal) selection, a fixed horizon, and the assumption that opponents launch nothing new beyond fleets already in flight (no adversarial game-tree search).
+
+\subsection{Per-turn pipeline}
+
+Algorithm in \texttt{run\_turn}:
+\begin{enumerate}
+\item \textbf{Parse} the observation into tensors (planets, in-flight fleets).
+\item \textbf{Build/refresh the movement model.} \texttt{PlanetMovement} predicts every planet's position over the horizon $H$, tracks in-flight fleets through a ledger, and supports forward projection of garrisons.
+\item \textbf{Distance cache.} Cross-time distances ``planet $s$ at $t{=}0$ to planet $t$ at step $k$''---the geometrically correct quantity for intercept feasibility against moving planets.
+\item \textbf{Garrison projection.} \texttt{garrison\_status} returns, for steps $0\ldots H$, each planet's projected (owner, ships) via an \emph{exact} recurrence: production, fleet arrivals, and combat resolved step by step.
+\item \textbf{Plan waves} (Sec.~\ref{sec:waves}).
+\item \textbf{Emit} the chosen launches as a sparse action payload.
+\end{enumerate}
+
+\subsection{Wave planning and scoring}
+\label{sec:waves}
+
+\paragraph{Shortlists} Sources are owned planets with at least \texttt{min\_ships\_to\_launch} ships, top-ranked by ship count. Targets combine an \emph{offensive} shortlist (enemy/neutral planets by proximity) and a \emph{defensive} shortlist of \textit{flip targets}---our own planets projected to be lost within the horizon, ranked by urgency $=\text{prod}\cdot(\text{turns left}) + \text{ships}$.
+
+\paragraph{Fleet sizing and reachability} For each (source, target), the launch size is \texttt{safe\_drain}: the most ships the source can send while still holding itself over the horizon. An analytic reachability test (accounting for orbital drift, sun line-of-sight, and surface offsets) and an \texttt{intercept\_angle} solver (fixed-point iteration) give the aim angle and ETA to the moving target.
+
+\paragraph{Capture floor} \texttt{capture\_floor} computes the \emph{minimum} ships to take a target at its arrival turn:
+\begin{equation}
+f_k = \big\lceil \text{defenders}_k + \text{overhead} + \text{reinforcements}_k \big\rceil,
+\end{equation}
+where $\text{defenders}_k$ is the projected garrison at arrival step $k$. A candidate is kept only if its size clears $f_k$. This yields disciplined ship economy: the agent never over-commits to a capture.
+
+\paragraph{Focus-fire} When no single source clears a target's floor, the planner \emph{pools} multiple sources whose fleets arrive on the \emph{same} turn and whose cumulative ships exceed $f_k$, forming a coordinated multi-source strike. (This is the main capability the strongest configuration adds over a single-source planner.)
+
+\paragraph{Marginal competitive scoring} Each candidate launch set $c$ is scored by its effect on the projected ship flow. Let $\Delta\eta_j(c)$ be the change in player $j$'s projected \emph{net} ships (produced minus lost in combat over the horizon) induced by $c$. The baseline objective is
+\begin{equation}
+\label{eq:comp}
+s(c) = \Delta\eta_{\mathrm{me}}(c) \;-\; \sum_{j \neq \mathrm{me}} \Delta\eta_j(c).
+\end{equation}
+This is a one-ply look-ahead over the exact simulator: it rewards launches that increase our net ships while reducing opponents' net ships.
+
+\paragraph{Greedy selection and regroup} A greedy loop selects the highest-scoring non-conflicting waves up to \texttt{max\_waves\_per\_turn}, respecting per-source budgets and an ROI threshold (fire only if $s(c)>$ \texttt{roi\_threshold}). Finally, a \emph{regroup} pass moves leftover ships from safe planets toward threatened friendly planets, following an enemy-pressure gradient that includes in-flight enemy fleets.
+
+\subsection{Configurations}
+A frozen \texttt{ProducerLiteConfig} holds the knobs. The 2p preset uses horizon $=18$, up to 6 waves/turn, ROI $=1.5$, focus-fire on (up to 4 strike sources). The 4p preset shortens the horizon to 13 and reduces sources, defensive targets, and strike sources, reflecting the higher branching and shorter useful look-ahead in a four-way game.
+
+% =====================================================================
+\section{Experimental results}
+\label{sec:results}
+
+\subsection{ctx2: held-out label agreement}
+
+\begin{table}[htbp]
+\caption{ctx2 training metrics on the held-out (by-group) split}
+\label{tab:metrics}
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Metric} & \textbf{2p} & \textbf{4p} \\
+\midrule
+Group top-1 agreement & 81.3\% & 84.8\% \\
+$R^2$ (MSE on scores) & 0.917 & 0.933 \\
+\midrule
+\multicolumn{3}{l}{\textit{Aggregate: top-1 $\approx$85\%, top-3 $\approx$95\%, $R^2 \approx 0.93$}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Top-1 agreement $\approx$85\% means that in about 85\% of re-rank decisions the model's top candidate matches the label; top-3 $\approx$95\% indicates the highest-labelled target is usually within the model's top three---errors are mostly secondary ordering, not missing the key target. The public score is about \textbf{1024.7} (it converged near 1067 earlier; TrueSkill drift $\pm 30$ on the board). Inference is $\approx$0.1\,s/turn and the submission needs only standard Python at competition time.
+
+\subsection{NeRL dominates head-to-head}
+
+In direct play (our local harness, built on \texttt{kaggle\_environments}) NeRL is decisively stronger than both our heuristic and \textit{ctx2}:
+
+\begin{table}[htbp]
+\caption{NeRL vs.\ our other agents (2p, representative seeds)}
+\label{tab:planner_h2h}
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Match (NeRL = P0)} & \textbf{Winner} & \textbf{Score} & \textbf{Turns to win} \\
+\midrule
+NeRL vs.\ \texttt{heuristic\_v6} & NeRL & 1211--0 & 85 / 500 \\
+NeRL vs.\ \textit{ctx2} & NeRL & 1478--0 & 94 / 500 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+In both 2p matches NeRL eliminates the opponent before turn 100 of 500. As our active leaderboard submission it currently rates \textbf{1154.6} (TrueSkill, still converging)---above \textit{ctx2}'s 1024.7 and consistent with the head-to-head dominance, though only mid-pack against the full 4016-team field (Sec.~\ref{sec:lbstanding}). The local domination of \textit{ctx2}/\texttt{v6} and the global rating measure different things: the former is a direct duel, the latter is a rating against the entire population. Per-turn compute (vectorised \texttt{torch} on CPU) stays well under the one-second budget despite performing a full forward projection every turn.
+
+\subsection{Leaderboard standing}
+\label{sec:lbstanding}
+Table~\ref{tab:lb} places our team within the \texttt{IAI-RL-*} class cohort on the public Orbit Wars leaderboard (snapshot of 08/06; TrueSkill ratings drift by $\pm 30$ and keep updating as submissions continue to play). Our active submission is \textbf{NeRL} at public score \textbf{1154.6}; our \textit{ctx2} submission scored \textbf{1024.7}. Among 4016 teams overall we rank \textbf{575th}; among the 17 class teams we rank \textbf{11th}. We report this plainly: NeRL dominates our \emph{own} earlier agents head-to-head, but on the global ladder it is mid-field, and several class teams running similar strong public agents rate above us. The value of this project is therefore less the raw number and more the comparative understanding of \emph{why} planning outperforms our learned re-ranker (Sec.~\ref{sec:discussion}).
+
+\begin{table}[htbp]
+\caption{\texttt{IAI-RL-*} class cohort on the public leaderboard (08/06 snapshot, 4016 teams total)}
+\label{tab:lb}
+\centering
+\small
+\begin{tabular}{clcc}
+\toprule
+\textbf{Class \#} & \textbf{Team} & \textbf{Score} & \textbf{Global rank} \\
+\midrule
+1 & IAI-RL-06 & 1314.9 & 61 \\
+2 & IAI-RL-IX & 1259.4 & 114 \\
+3 & IAI-RL-II & 1228.3 & 191 \\
+4 & IAI-RL-NapNap & 1222.5 & 209 \\
+5 & IAI-RL-17 & 1212.7 & 254 \\
+6 & IAI-RL-GaNhatVienAI & 1202.0 & 337 \\
+7 & IAI-RL-Tlm71 & 1201.2 & 343 \\
+8 & IAI-RL-Beginner & 1194.6 & 393 \\
+9 & IAI-RL-Checkm8 & 1186.3 & 439 \\
+10 & IAI-RL-04 & 1176.0 & 496 \\
+\textbf{11} & \textbf{IAI-RL-DirtyDozen (ours)} & \textbf{1154.6} & \textbf{575} \\
+12 & IAI-RL-03 & 1115.0 & 640 \\
+13 & IAI-RL-codex & 1108.8 & 645 \\
+14 & IAI-RL-RUN & 1053.3 & 693 \\
+15 & IAI-RL-10 & 935.7 & 941 \\
+16 & IAI-RL-Cherry\_11 & 887.1 & 1033 \\
+17 & IAI-RL-Trauma07 & 696.6 & 1957 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =====================================================================
+\section{Discussion: learning vs.\ planning}
+\label{sec:discussion}
+
+\subsection{The ceiling of offline supervised learning}
+
+\textit{ctx2}'s objective is to \emph{match a label}, not to \emph{maximise win rate}. Our experiments confirmed that higher label agreement does not always mean stronger play---a variant that fit the labels more tightly actually scored \emph{lower}---so \textbf{label agreement $\neq$ competitive strength}. A supervised re-ranker can, at best, approach the quality of the scorer that produced its labels; it cannot exceed it. This is the fundamental ceiling that the planner sidesteps: by optimising a \emph{consequence} (projected ship flow) rather than imitating a \emph{preference}, the planner is not bounded by any teacher.
+
+\subsection{Why the planner wins}
+
+The planner has three structural advantages over the re-ranker:
+\begin{enumerate}
+\item \textbf{It optimises outcomes, not labels.} Eq.~\eqref{eq:comp} is grounded in the actual game dynamics; the re-ranker is grounded in a fixed scoring heuristic.
+\item \textbf{Exact ship economy.} The capture floor sends the minimum winning fleet, freeing ships for more targets---an efficiency the feature-based re-ranker only approximates.
+\item \textbf{Coordination.} Focus-fire executes multi-planet strikes that a per-candidate re-ranker, scoring each launch independently, cannot represent.
+\end{enumerate}
+
+\subsection{Distribution shift and compounding errors}
+
+At training time \textit{ctx2}'s data lies on the state distribution induced by the collection pipeline; at competition time the agent follows its \emph{own} distribution, and the mismatch causes \textbf{compounding errors}. The principled remedy is \textbf{DAgger}~\cite{dagger2011}: relabel the states the agent actually visits and retrain. The planner is immune to this failure mode---it re-plans from the true state every turn, so there is no train/test distribution gap.
+
+\subsection{Reliability of evaluation}
+
+Local self-play and win rate against a fixed pool do \emph{not} correlate tightly with the public leaderboard, because of distribution shift to the real competitor population and TrueSkill drift. We therefore trust only \textbf{paired held-out metrics} (agreement, $R^2$) and \textbf{direct leaderboard results}, and we treat any cross-day absolute-score comparison with suspicion.
+
+\subsection{Limits and future work}
+
+The planner's largest simplification is the absence of opponent modelling: it assumes rivals launch nothing new beyond fleets already in flight. Natural extensions toward opponent awareness are (i) a shallow adversarial roll-out (simulate the strongest rival's likely best reply), (ii) replacing greedy wave selection with a small beam search, and (iii) using \textit{ctx2}'s learned score as a \emph{tie-breaker} inside the planner's shortlist---a concrete way to combine the two paradigms, with learning proposing and planning disposing.
+
+% =====================================================================
+\section{Implementation structure}
+
+Table~\ref{tab:files} shows the packaged model bundle; the full development repository---both agents, the training pipeline, and the evaluation harness---is at the GitHub link in Sec.~\ref{sec:team}.
+
+\begin{table}[htbp]
+\caption{Packaged submission layout (ctx2 model bundle); NeRL ships as one standalone file}
+\label{tab:files}
+\centering
+\small
+\begin{tabular}{lp{5.4cm}}
+\toprule
+\textbf{Path} & \textbf{Role} \\
+\midrule
+\multicolumn{2}{l}{\textit{Approach A --- ctx2 (learned re-ranker)}} \\
+\texttt{agent/submission\_distilled\_ctx2.py} & Single-file competition submission \\
+\texttt{model/student\_weights\_\{2p,4p\}.py} & MLP weights + \texttt{score\_many} \\
+\texttt{engine/orbit\_base.py} & Rule engine (gameplay) \\
+\texttt{engine/main.py} & Candidate generation, 46 features, re-rank \\
+\texttt{engine/feature46\_manifest.json} & Feature schema + re-rank hyper-params \\
+\texttt{training/distill\_collect\_grouped.py} & Grouped data collection \\
+\texttt{training/distill\_train\_ctx.py} & Train + export \\
+\texttt{training/validate\_student.py} & Held-out agreement check \\
+\texttt{training/selfplay.py} & A/B self-play \\
+\midrule
+\multicolumn{2}{l}{\textit{Approach B --- NeRL (model-predictive planner)}} \\
+\texttt{agents/NeRL.py} & NeRL planner, single file \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Reproduction (Approach A): collect $\rightarrow$ train $\rightarrow$ validate $\rightarrow$ build submission; the $\approx$85\,MB \texttt{.npz} data can be regenerated by the collection script. Approach B has no training step---the agent is self-contained and deterministic given the seed.
+
+\section{Conclusion}
+
+We presented two agents for Orbit Wars and an honest comparison of their paradigms. \textit{ctx2} is a hybrid design---a rule engine for mechanics and a compact DeepSet re-ranker (230-128-128-1) for target selection---trained on $\approx$510\,000 candidates to $\approx$81--85\% top-1 agreement and $R^2 \approx 0.92$--0.93, scoring about 1024.7. NeRL, our model-predictive planner, carries no learned parameters yet rates 1154.6 on the public leaderboard---above \textit{ctx2}---and eliminates both \textit{ctx2} and our heuristic head-to-head, because it optimises the simulated \emph{outcome} rather than imitating a fixed preference. The broader lesson is the classic learning-versus-planning trade-off: when an exact model is available, planning against it can outperform learning to imitate, and the most promising direction is to let learning \emph{propose} and planning \emph{dispose}.
+
+\section*{Acknowledgement}
+
+We thank the course instructors and the Orbit Wars organisers for the competition environment, benchmarks, and guidance, and the competitor community for real-world feedback on agent performance.
+
+\begin{thebibliography}{00}
+\bibitem{deepsets2017}
+M.~Zaheer \textit{et al.},
+``Deep sets,''
+\textit{Advances in Neural Information Processing Systems (NeurIPS)}, 2017.
+
+\bibitem{dagger2011}
+S.~Ross, G.~Gordon, and D.~Bagnell,
+``A reduction of imitation learning and structured prediction to no-regret online learning,''
+\textit{AISTATS}, pp.~627--635, 2011.
+
+\bibitem{imitation_survey2017}
+A.~Hussein \textit{et al.},
+``Imitation learning: A survey of learning methods,''
+\textit{ACM Computing Surveys}, vol.~50, no.~2, pp.~1--35, 2017.
+
+\bibitem{mpc1989}
+C.~E.~Garcia, D.~M.~Prett, and M.~Morari,
+``Model predictive control: Theory and practice---a survey,''
+\textit{Automatica}, vol.~25, no.~3, pp.~335--348, 1989.
+
+\bibitem{suttonbarto}
+R.~S.~Sutton and A.~G.~Barto,
+\textit{Reinforcement Learning: An Introduction}, 2nd ed.
+MIT Press, 2018.
+\end{thebibliography}
+
+\end{document}
