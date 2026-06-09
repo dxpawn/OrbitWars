@@ -42,11 +42,11 @@ Hà Nội, Việt Nam \\
 \begin{abstract}
 Báo cáo mô tả hai thiết kế agent khác nhau cho trò chơi chiến lược thời gian thực \textit{Orbit Wars}, cả hai đều do nhóm xây dựng. Agent thứ nhất, \textit{ctx2}, là một agent \textbf{hybrid}: một engine quy tắc xử lý toàn bộ vật lý và cơ chế trò chơi (sinh ứng viên, định cỡ hạm đội, dẫn đường quỹ đạo, tránh mặt trời, giải quyết giao tranh, gia cố phòng thủ), còn quyết định chiến lược quan trọng nhất---\textit{chọn hành tinh nào để tấn công và từ đâu}---do một mạng nơ-ron nhỏ đóng vai trò \textit{re-ranker} đảm nhiệm. Mạng đọc 230 đặc trưng cho mỗi ứng viên (46 đặc trưng cơ sở cộng thống kê tập kiểu DeepSet) và dùng MLP cỡ $230 \rightarrow 128 \rightarrow 128 \rightarrow 1$. Nó được huấn luyện bằng hồi quy có giám sát trên khoảng 510\,000 ứng viên có nhãn, rồi xuất sang Python thuần để chạy trong giới hạn một giây mỗi lượt. Trên tập kiểm tra giữ lại, nó chọn đúng ứng viên hàng đầu như nhãn khoảng 81--85\% số lần; điểm công khai khoảng 1001 (bản hiện tại 1000.8; từng gần 1067).
 
-Agent thứ hai, \textbf{NeRL} (viết tắt của \emph{Not even RL} -- ``thậm chí không phải RL''), là một \textbf{bộ lập kế hoạch dựa trên mô hình dự báo}. Nó \emph{không} có tham số học. Nó dựng một mô hình mô phỏng tiến của trò chơi bằng tensor, dự báo chủ sở hữu và lực lượng đồn trú (số tàu đóng tại đó) tương lai của từng hành tinh trong một chân trời thời gian, và chọn các đợt phóng theo mức độ chúng cải thiện trạng thái dự báo (một hàm mục tiêu dòng tàu cạnh tranh). Sau đó nó chọn vài đợt tấn công kiểu tham lam, gửi đúng hạm đội tối thiểu để chiếm (ngưỡng chiếm tối thiểu), gộp hạm đội từ nhiều hành tinh khi một hành tinh không đủ (focus-fire), và tái tập hợp tàu để phòng thủ. Trong đối đầu trực tiếp, nó thắng dứt khoát cả \textit{ctx2} lẫn heuristic mạnh nhất của nhóm. Là bản nộp đang hoạt động trên bảng xếp hạng, nó đạt 1141.8, cao hơn re-ranker. Chúng tôi giải thích vì sao một bộ lập kế hoạch có mô hình chính xác tránh được trần bắt chước (\textit{imitation ceiling}) và \textit{distribution shift}---hai vấn đề vốn giới hạn re-ranker học có giám sát---và điều đó có ý nghĩa gì cho việc kết hợp học máy với lập kế hoạch.
+Agent thứ hai, \textbf{NeRL} (viết tắt của \emph{Not even RL} -- ``thậm chí không phải RL''), là một \textbf{bộ lập kế hoạch dựa trên mô hình dự báo}. Nó \emph{không} có tham số học. Nó dựng một mô hình mô phỏng tiến của trò chơi bằng tensor, dự báo chủ sở hữu và lực lượng đồn trú (số tàu đóng tại đó) tương lai của từng hành tinh trong một horizon thời gian, và chọn các đợt phóng theo mức độ chúng cải thiện trạng thái dự báo (một hàm mục tiêu dòng tàu cạnh tranh). Sau đó nó chọn vài đợt tấn công kiểu tham lam, gửi đúng hạm đội tối thiểu để chiếm (ngưỡng chiếm tối thiểu), gộp hạm đội từ nhiều hành tinh khi một hành tinh không đủ (focus-fire), và tái tập hợp tàu để phòng thủ. Trong đối đầu trực tiếp, nó thắng dứt khoát cả \textit{ctx2} lẫn heuristic mạnh nhất của nhóm. Là bản nộp đang hoạt động trên bảng xếp hạng, nó đạt 1141.8, cao hơn re-ranker. Chúng tôi giải thích vì sao một bộ lập kế hoạch có mô hình chính xác tránh được trần bắt chước (\textit{imitation ceiling}) và \textit{distribution shift}---hai vấn đề vốn giới hạn re-ranker học có giám sát---và điều đó có ý nghĩa gì cho việc kết hợp học máy với lập kế hoạch.
 \end{abstract}
 
 \begin{IEEEkeywords}
-Orbit Wars, lập kế hoạch dựa trên mô hình dự báo, chân trời lùi, học có giám sát, re-ranker, DeepSet, game AI, self-play
+Orbit Wars, lập kế hoạch dựa trên mô hình dự báo, horizon lùi, học có giám sát, re-ranker, DeepSet, game AI, self-play
 \end{IEEEkeywords}
 
 \section{Nhóm, đóng góp và kho mã nguồn}
@@ -96,7 +96,7 @@ Nhóm giải bài toán theo hai cách, và báo cáo trình bày cả hai như 
 
 \textbf{Hướng A --- học ở chỗ quan trọng (\textit{ctx2}).} Chúng tôi tách \emph{cơ học} khỏi \emph{phán đoán}. Mọi thứ có thể viết thành quy tắc---định cỡ hạm đội, ngắm bắn, tránh mặt trời, giao tranh, gia cố---do engine quy tắc xử lý. Chỉ riêng quyết định có giá trị cao, ``trong các mục tiêu khả thi thì mục tiêu nào đáng tấn công'', là được học từ dữ liệu thu thập. Đây là một nguyên tắc đơn giản: không dùng học máy ở chỗ quy tắc đã chạy tốt; chỉ dồn mô hình vào quyết định đáng giá nhất.
 
-\textbf{Hướng B --- lập kế hoạch với mô hình chính xác.} Thay vì \emph{học} một sở thích mục tiêu, bộ lập kế hoạch \emph{tính} ra nó. Vì luật của trò chơi đã biết, ta mô phỏng tương lai gần một cách chính xác và chọn các đợt phóng làm kết quả dự báo có lợi cho ta nhất. Đây là lập kế hoạch dựa trên mô hình theo nghĩa chân trời lùi / điều khiển dự báo theo mô hình (MPC)~\cite{mpc1989, suttonbarto}: mô hình được \emph{cho trước}, không phải học.
+\textbf{Hướng B --- lập kế hoạch với mô hình chính xác.} Thay vì \emph{học} một sở thích mục tiêu, bộ lập kế hoạch \emph{tính} ra nó. Vì luật của trò chơi đã biết, ta mô phỏng tương lai gần một cách chính xác và chọn các đợt phóng làm kết quả dự báo có lợi cho ta nhất. Đây là lập kế hoạch dựa trên mô hình theo nghĩa horizon lùi / điều khiển dự báo theo mô hình (MPC)~\cite{mpc1989, suttonbarto}: mô hình được \emph{cho trước}, không phải học.
 
 \textbf{Đóng góp.}
 \begin{enumerate}
@@ -276,18 +276,18 @@ Mô hình được huấn luyện bằng \textbf{học có giám sát ngoại tu
 \section{Hướng B: NeRL, bộ lập kế hoạch dựa trên mô hình dự báo}
 \label{sec:planner}
 
-\textbf{NeRL}---viết tắt của \emph{Not even RL}, vì nó hoàn toàn không học---chơi cùng trò chơi với \textit{ctx2} nhưng theo cách ngược lại: thay vì \emph{học} mục tiêu nào nên ưu tiên, nó \emph{mô phỏng} kết quả của từng đợt phóng ứng viên và chọn đợt cải thiện kết quả dự báo nhiều nhất. Cái tên cho thấy NeRL thuộc phần \emph{lập kế hoạch} của môn học (lập kế hoạch dựa trên mô hình đã biết), không phải phần học máy. Nó \textbf{không có mạng nơ-ron và không có trọng số học}; \texttt{torch} chỉ được dùng như một thư viện mảng nhanh để toàn bộ mô phỏng vừa với ngân sách thời gian.
+\textbf{NeRL}---viết tắt của \emph{Not even RL}, vì nó hoàn toàn không học---chơi cùng trò chơi với \textit{ctx2} nhưng theo cách ngược lại: thay vì \emph{học} mục tiêu nào nên ưu tiên, nó \emph{mô phỏng} kết quả của từng đợt và chọn đợt cải thiện kết quả dự báo nhiều nhất. Cái tên cho thấy NeRL thuộc phần \emph{lập kế hoạch} của môn học (lập kế hoạch dựa trên mô hình đã biết), không phải phần học máy. Nó \textbf{không có mạng nơ-ron và không có trọng số học}; \texttt{torch} chỉ được dùng như một thư viện mảng nhanh để toàn bộ mô phỏng vừa với ngân sách thời gian.
 
 \subsection{Agent này là gì, theo ngôn ngữ RL}
 
-Vì luật đã biết chính xác, NeRL là \textbf{lập kế hoạch dựa trên mô hình cho trước}~\cite{suttonbarto}---một bộ điều khiển chân trời lùi, hay dự báo theo mô hình (MPC)~\cite{mpc1989}. Nó \emph{không} phải heuristic phản xạ (nó không chấm điểm trạng thái hiện tại; nó mô phỏng tương lai), và \emph{không} học. Các phần heuristic duy nhất là những xấp xỉ thực dụng để giữ cho việc lập kế hoạch nhanh: rút gọn danh sách ứng viên, lựa chọn tham lam (không tối ưu), một chân trời cố định, và giả định rằng đối thủ không phóng gì mới ngoài các hạm đội đã bay (không có tìm kiếm cây trò chơi đối kháng).
+Vì luật đã biết chính xác, NeRL là \textbf{lập kế hoạch dựa trên mô hình cho trước}~\cite{suttonbarto}---dự báo theo mô hình (MPC)~\cite{mpc1989}. Nó \emph{không} phải heuristic phản xạ (nó không chấm điểm trạng thái hiện tại; nó mô phỏng tương lai), và \emph{không} học. Các phần heuristic duy nhất là những xấp xỉ thực dụng để giữ cho việc lập kế hoạch nhanh: rút gọn danh sách ứng viên, lựa chọn tham lam (không tối ưu), một horizon cố định, và giả định rằng đối thủ không phóng gì mới ngoài các hạm đội đã bay (không có tìm kiếm cây trò chơi đối kháng).
 
 \subsection{Pipeline mỗi lượt}
 
 Thuật toán trong \texttt{run\_turn}:
 \begin{enumerate}
 \item \textbf{Đọc} observation thành tensor (hành tinh, hạm đội đang bay).
-\item \textbf{Dựng hoặc làm mới mô hình chuyển động.} \texttt{PlanetMovement} dự báo vị trí mọi hành tinh trong chân trời $H$, theo dõi hạm đội đang bay bằng một sổ cái (ledger), và hỗ trợ dự báo tiến lực lượng đồn trú.
+\item \textbf{Dựng hoặc làm mới mô hình chuyển động.} \texttt{PlanetMovement} dự báo vị trí mọi hành tinh trong horizon $H$, theo dõi hạm đội đang bay bằng một sổ cái (ledger), và hỗ trợ dự báo tiến lực lượng đồn trú.
 \item \textbf{Cache khoảng cách.} Khoảng cách chéo thời gian ``hành tinh $s$ tại $t{=}0$ đến hành tinh $t$ tại bước $k$''---khoảng cách đúng về hình học để kiểm tra xem một hạm đội có kịp tới một hành tinh đang di chuyển hay không.
 \item \textbf{Dự báo đồn trú.} \texttt{garrison\_status} trả về, cho các bước $0\ldots H$, dự báo (chủ sở hữu, số tàu) của từng hành tinh bằng một đệ quy \emph{chính xác}: sản lượng, hạm đội đến, và giao tranh được giải quyết theo từng bước.
 \item \textbf{Lập kế hoạch các đợt sóng} (Mục~\ref{sec:waves}).
@@ -297,9 +297,9 @@ Thuật toán trong \texttt{run\_turn}:
 \subsection{Lập kế hoạch đợt sóng và chấm điểm}
 \label{sec:waves}
 
-\paragraph{Danh sách rút gọn} Nguồn là các hành tinh ta sở hữu có ít nhất \texttt{min\_ships\_to\_launch} tàu, xếp theo số tàu. Mục tiêu gồm một danh sách \emph{tấn công} (hành tinh địch hoặc trung lập theo khoảng cách) và một danh sách \emph{phòng thủ} các \textit{mục tiêu lật} (\textit{flip})---hành tinh của ta được dự báo sẽ mất trong chân trời, xếp theo độ khẩn cấp $=\text{sản lượng}\cdot(\text{số lượt còn lại}) + \text{số tàu}$.
+\paragraph{Danh sách rút gọn} Nguồn là các hành tinh ta sở hữu có ít nhất \texttt{min\_ships\_to\_launch} tàu, xếp theo số tàu. Mục tiêu gồm một danh sách \emph{tấn công} (hành tinh địch hoặc trung lập theo khoảng cách) và một danh sách \emph{phòng thủ} các \textit{mục tiêu lật} (\textit{flip})---hành tinh của ta được dự báo sẽ mất trong horizon, xếp theo độ khẩn cấp $=\text{sản lượng}\cdot(\text{số lượt còn lại}) + \text{số tàu}$.
 
-\paragraph{Định cỡ và khả năng tới được} Với mỗi (nguồn, đích), cỡ đợt phóng là \texttt{safe\_drain}: số tàu nhiều nhất nguồn có thể gửi mà vẫn tự giữ được qua chân trời. Một kiểm tra khả năng tới được dạng giải tích (có tính đến trôi quỹ đạo, mặt trời che tầm nhìn, và độ lệch bề mặt) cùng một bộ giải \texttt{intercept\_angle} (lặp điểm bất động) cho ra góc ngắm và ETA tới mục tiêu di chuyển.
+\paragraph{Định cỡ và khả năng tới được} Với mỗi (nguồn, đích), cỡ đợt phóng là \texttt{safe\_drain}: số tàu nhiều nhất nguồn có thể gửi mà vẫn tự giữ được qua horizon. Một kiểm tra khả năng tới được dạng giải tích (có tính đến trôi quỹ đạo, mặt trời che tầm nhìn, và độ lệch bề mặt) cùng một bộ giải \texttt{intercept\_angle} (lặp điểm bất động) cho ra góc ngắm và ETA tới mục tiêu di chuyển.
 
 \paragraph{Ngưỡng chiếm tối thiểu} \texttt{capture\_floor} tính số tàu \emph{tối thiểu} cần để chiếm một mục tiêu tại lượt đến của nó:
 \begin{equation}
@@ -309,7 +309,7 @@ với $\text{phòng thủ}_k$ là lực lượng đồn trú dự báo tại bư
 
 \paragraph{Focus-fire} Khi không nguồn đơn nào vượt được ngưỡng của một mục tiêu, bộ lập kế hoạch \emph{gộp} nhiều nguồn có hạm đội đến trong \emph{cùng} một lượt và tổng số tàu vượt $f_k$, tạo một đòn đánh phối hợp đa nguồn. Đây là tính năng chính mà cấu hình mạnh nhất bổ sung so với bản đơn nguồn.
 
-\paragraph{Chấm điểm cạnh tranh biên} Mỗi tập đợt phóng ứng viên $c$ được chấm theo ảnh hưởng của nó lên dòng tàu dự báo. Gọi $\Delta\eta_j(c)$ là thay đổi số tàu \emph{ròng} dự báo của người chơi $j$ (sản xuất trừ mất trong giao tranh qua chân trời) do $c$ gây ra. Hàm mục tiêu là
+\paragraph{Chấm điểm cạnh tranh biên} Mỗi tập đợt phóng ứng viên $c$ được chấm theo ảnh hưởng của nó lên dòng tàu dự báo. Gọi $\Delta\eta_j(c)$ là thay đổi số tàu \emph{ròng} dự báo của người chơi $j$ (sản xuất trừ mất trong giao tranh qua horizon) do $c$ gây ra. Hàm mục tiêu là
 \begin{equation}
 \label{eq:comp}
 s(c) = \Delta\eta_{\mathrm{me}}(c) \;-\; \sum_{j \neq \mathrm{me}} \Delta\eta_j(c).
@@ -319,7 +319,7 @@ s(c) = \Delta\eta_{\mathrm{me}}(c) \;-\; \sum_{j \neq \mathrm{me}} \Delta\eta_j(
 \paragraph{Lựa chọn tham lam và tái tập hợp} Một vòng tham lam chọn các đợt sóng có điểm cao nhất không xung đột, tối đa \texttt{max\_waves\_per\_turn}, trong ngân sách của từng nguồn và trên một ngưỡng ROI (chỉ phóng nếu $s(c)>$ \texttt{roi\_threshold}). Cuối cùng, một bước \emph{tái tập hợp} chuyển tàu dư từ các hành tinh an toàn về các hành tinh bạn đang bị đe dọa, theo một gradient áp lực địch có tính cả hạm đội địch đang bay.
 
 \subsection{Cấu hình}
-Một \texttt{ProducerLiteConfig} cố định giữ các thiết lập. Cấu hình 2p dùng chân trời $=18$, tối đa 6 đợt sóng mỗi lượt, ROI $=1{,}5$, và focus-fire bật (tối đa 4 nguồn đánh). Cấu hình 4p rút chân trời xuống 13 và giảm số nguồn, số mục tiêu phòng thủ, và số nguồn đánh, vì một trận bốn người có nhiều phân nhánh hơn và tầm look-ahead hữu ích ngắn hơn.
+Một \texttt{ProducerLiteConfig} cố định giữ các thiết lập. Cấu hình 2p dùng horizon $=18$, tối đa 6 đợt sóng mỗi lượt, ROI $=1{,}5$, và focus-fire bật (tối đa 4 nguồn đánh). Cấu hình 4p rút horizon xuống 13 và giảm số nguồn, số mục tiêu phòng thủ, và số nguồn đánh, vì một trận bốn người có nhiều phân nhánh hơn và tầm look-ahead hữu ích ngắn hơn.
 
 % =====================================================================
 \section{Kết quả thực nghiệm}
@@ -374,6 +374,7 @@ Bảng~\ref{tab:lb} cho thấy nhóm trong các đội \texttt{IAI-RL-*} của l
 \label{tab:lb}
 \centering
 \small
+\scalebox{0.9}{
 \begin{tabular}{clcc}
 \toprule
 \textbf{Hạng lớp} & \textbf{Đội} & \textbf{Điểm} & \textbf{Hạng toàn cục} \\
@@ -399,6 +400,7 @@ Bảng~\ref{tab:lb} cho thấy nhóm trong các đội \texttt{IAI-RL-*} của l
 19 & IAI-RL-Trauma07 & 709.0 & 1906 \\
 \bottomrule
 \end{tabular}
+}
 \end{table}
 
 % =====================================================================
