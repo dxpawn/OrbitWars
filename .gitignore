@@ -13,3 +13,17 @@ submission.tar.gz
 other_adversaries/SimplifiedOWAgentLB1234.py
 /other_adversaries/carbon_orbitwarsv2_lb1221
 agents/SimplifiedOWAgentLB1234.py
+
+# LaTeX build artifacts
+*.synctex.gz
+*.toc
+*.out
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
+*.lof
+*.lot
+
+# Kaggle leaderboard download (re-fetchable)
+eval/lb/
