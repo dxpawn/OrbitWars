@@ -1,3 +1,11 @@
+Lesson learned after competition:
+1. Do not pair up with idiot teammate
+2. In case paired with idiot teammate, ask the course instructor for permission to plunder your teammate's score
+3. No matter how hard you try, there's always some guy with a B300 GPU and he will beat the sh*t out of your agent
+4. 80% of my class copied publicly released agents. And they got a course GPA higher than me.
+   
+   -> Moral of the story: Academic integrity is bullsh*t. Fake it till you make it.
+---
 # Orbit Wars
 
 Conquer planets rotating around a sun in continuous 2D space. A real-time strategy game for 2 or 4 players.
